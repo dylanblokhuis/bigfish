@@ -1,0 +1,398 @@
+use crate::sys;
+use std::{
+    ffi::{CStr, CString},
+    marker::PhantomData,
+    mem::MaybeUninit,
+    os::raw::c_void,
+    ptr,
+};
+
+pub type Result<T> = std::result::Result<T, DartError>;
+
+#[derive(Debug, thiserror::Error)]
+pub enum DartError {
+    #[error("dart api returned null handle")]
+    NullHandle,
+    #[error("dart api error: {0}")]
+    Api(String),
+}
+
+impl DartError {
+    fn from_error_handle(handle: sys::Dart_Handle) -> Self {
+        unsafe {
+            let msg_ptr = sys::Dart_GetError(handle);
+            if msg_ptr.is_null() {
+                return DartError::Api("<Dart_GetError returned null>".to_string());
+            }
+            let msg = CStr::from_ptr(msg_ptr).to_string_lossy().into_owned();
+            DartError::Api(msg)
+        }
+    }
+}
+
+fn check(handle: sys::Dart_Handle) -> Result<sys::Dart_Handle> {
+    if handle.is_null() {
+        return Err(DartError::NullHandle);
+    }
+    if unsafe { sys::Dart_IsError(handle) } {
+        return Err(DartError::from_error_handle(handle));
+    }
+    Ok(handle)
+}
+
+/// A running Dart VM instance (initialized via `DartDll_Initialize`).
+///
+/// Dropping this will call `DartDll_Shutdown()`.
+pub struct Runtime {
+    _priv: (),
+}
+
+impl Runtime {
+    pub fn initialize(config: &sys::DartDllConfig) -> Result<Self> {
+        let ok = unsafe { sys::DartDll_Initialize(config) };
+        if !ok {
+            return Err(DartError::Api("DartDll_Initialize returned false".into()));
+        }
+        Ok(Self { _priv: () })
+    }
+
+    pub fn load_script(
+        &self,
+        script_uri: &CStr,
+        package_config: &CStr,
+        isolate_data: *mut c_void,
+    ) -> Result<Isolate> {
+        let isolate = unsafe { sys::DartDll_LoadScript(script_uri.as_ptr(), package_config.as_ptr(), isolate_data) };
+        if isolate.is_null() {
+            return Err(DartError::Api("DartDll_LoadScript returned null isolate".into()));
+        }
+        Ok(Isolate { raw: isolate })
+    }
+
+    pub fn drain_microtask_queue<'i>(&self, scope: &Scope<'i>) -> Result<Handle<'i>> {
+        scope.check(unsafe { sys::DartDll_DrainMicrotaskQueue() })
+    }
+}
+
+impl Drop for Runtime {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = sys::DartDll_Shutdown();
+        }
+    }
+}
+
+/// A Dart isolate created/loaded through the embedding API.
+pub struct Isolate {
+    raw: sys::Dart_Isolate,
+}
+
+impl Isolate {
+    pub fn enter(&mut self) -> Scope<'_> {
+        unsafe {
+            sys::Dart_EnterIsolate(self.raw);
+            sys::Dart_EnterScope();
+            let lib = sys::Dart_RootLibrary();
+            Scope {
+                _isolate: self,
+                library: lib,
+                _marker: PhantomData,
+            }
+        }
+    }
+}
+
+impl Drop for Isolate {
+    fn drop(&mut self) {
+        // Best-effort isolate shutdown. The API requires a current isolate.
+        unsafe {
+            if !self.raw.is_null() {
+                sys::Dart_EnterIsolate(self.raw);
+                sys::Dart_ShutdownIsolate();
+                sys::Dart_ExitIsolate();
+            }
+        }
+    }
+}
+
+/// A Dart API scope bound to an entered isolate.
+///
+/// All [`Handle`] values produced from this scope are only valid until this is dropped.
+pub struct Scope<'i> {
+    _isolate: &'i mut Isolate,
+    library: sys::Dart_Handle,
+    _marker: PhantomData<&'i mut ()>,
+}
+
+impl<'i> Scope<'i> {
+    pub fn library(&self) -> Handle<'i> {
+        Handle {
+            raw: self.library,
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn check(&self, handle: sys::Dart_Handle) -> Result<Handle<'i>> {
+        let handle = check(handle)?;
+        Ok(Handle {
+            raw: handle,
+            _marker: PhantomData,
+        })
+    }
+
+    pub fn new_string(&self, s: &str) -> Result<Handle<'i>> {
+        let s = CString::new(s).map_err(|_| DartError::Api("string contained interior NUL".into()))?;
+        self.check(unsafe { sys::Dart_NewStringFromCString(s.as_ptr()) })
+    }
+
+    pub fn invoke(
+        &mut self,
+        name: &str,
+        args: &mut [sys::Dart_Handle],
+    ) -> Result<Handle<'i>> {
+        let name = self.new_string(name)?;
+        self.check(unsafe {
+            sys::Dart_Invoke(
+                self.library,
+                name.raw,
+                args.len() as i32,
+                args.as_mut_ptr(),
+            )
+        })
+    }
+
+    pub fn instance_get_type(&self, instance: Handle<'i>) -> Result<Handle<'i>> {
+        self.check(unsafe { sys::Dart_InstanceGetType(instance.raw) })
+    }
+
+    pub fn class_name(&self, cls_type: Handle<'i>) -> Result<Handle<'i>> {
+        self.check(unsafe { sys::Dart_ClassName(cls_type.raw) })
+    }
+
+    pub fn function_name(&self, function: Handle<'i>) -> Result<Handle<'i>> {
+        self.check(unsafe { sys::Dart_FunctionName(function.raw) })
+    }
+
+    pub fn get_error_message(&mut self, error: sys::Dart_Handle) -> String {
+        unsafe {
+            let msg_ptr = sys::Dart_GetError(error);
+            if msg_ptr.is_null() {
+                "<Dart_GetError returned null>".to_string()
+            } else {
+                CStr::from_ptr(msg_ptr).to_string_lossy().into_owned()
+            }
+        }
+    }
+}
+
+impl Drop for Scope<'_> {
+    fn drop(&mut self) {
+        unsafe {
+            sys::Dart_ExitScope();
+            sys::Dart_ExitIsolate();
+        }
+    }
+}
+
+/// A non-owning handle that is only valid for the lifetime of its [`Scope`].
+#[repr(transparent)]
+pub struct Handle<'s> {
+    raw: sys::Dart_Handle,
+    _marker: PhantomData<&'s ()>,
+}
+
+impl<'s> Copy for Handle<'s> {}
+impl<'s> Clone for Handle<'s> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<'s> Handle<'s> {
+    pub fn raw(self) -> sys::Dart_Handle {
+        self.raw
+    }
+
+    pub fn is_string(self) -> bool {
+        unsafe { sys::Dart_IsString(self.raw) }
+    }
+
+    pub fn is_integer(self) -> bool {
+        unsafe { sys::Dart_IsInteger(self.raw) }
+    }
+
+    pub fn is_double(self) -> bool {
+        unsafe { sys::Dart_IsDouble(self.raw) }
+    }
+
+    pub fn is_boolean(self) -> bool {
+        unsafe { sys::Dart_IsBoolean(self.raw) }
+    }
+
+    pub fn is_list(self) -> bool {
+        unsafe { sys::Dart_IsList(self.raw) }
+    }
+
+    pub fn is_typed_data(self) -> bool {
+        unsafe { sys::Dart_IsTypedData(self.raw) }
+    }
+
+    pub fn identity_equals(self, other: Handle<'s>) -> bool {
+        unsafe { sys::Dart_IdentityEquals(self.raw, other.raw) }
+    }
+
+    pub fn object_equals(self, other: Handle<'s>) -> Result<bool> {
+        let mut out = MaybeUninit::<bool>::uninit();
+        check(unsafe { sys::Dart_ObjectEquals(self.raw, other.raw, out.as_mut_ptr()) })?;
+        Ok(unsafe { out.assume_init() })
+    }
+
+    pub fn object_is_type(self, type_obj: Handle<'s>) -> Result<bool> {
+        let mut out = MaybeUninit::<bool>::uninit();
+        check(unsafe { sys::Dart_ObjectIsType(self.raw, type_obj.raw, out.as_mut_ptr()) })?;
+        Ok(unsafe { out.assume_init() })
+    }
+
+    pub fn to_bool(self) -> Result<bool> {
+        let mut out = MaybeUninit::<bool>::uninit();
+        check(unsafe { sys::Dart_BooleanValue(self.raw, out.as_mut_ptr()) })?;
+        Ok(unsafe { out.assume_init() })
+    }
+
+    pub fn to_i64(self) -> Result<i64> {
+        let mut out = MaybeUninit::<i64>::uninit();
+        check(unsafe { sys::Dart_IntegerToInt64(self.raw, out.as_mut_ptr()) })?;
+        Ok(unsafe { out.assume_init() })
+    }
+
+    pub fn to_u64(self) -> Result<u64> {
+        let mut out = MaybeUninit::<u64>::uninit();
+        check(unsafe { sys::Dart_IntegerToUint64(self.raw, out.as_mut_ptr()) })?;
+        Ok(unsafe { out.assume_init() })
+    }
+
+    pub fn to_f64(self) -> Result<f64> {
+        let mut out = MaybeUninit::<f64>::uninit();
+        check(unsafe { sys::Dart_DoubleValue(self.raw, out.as_mut_ptr()) })?;
+        Ok(unsafe { out.assume_init() })
+    }
+
+    pub fn to_utf8(self) -> Result<Vec<u8>> {
+        let mut ptr_out = MaybeUninit::<*mut u8>::uninit();
+        let mut len_out = MaybeUninit::<isize>::uninit();
+        check(unsafe {
+            sys::Dart_StringToUTF8(
+                self.raw,
+                ptr_out.as_mut_ptr(),
+                len_out.as_mut_ptr() as *mut isize,
+            )
+        })?;
+
+        let ptr = unsafe { ptr_out.assume_init() };
+        let len = unsafe { len_out.assume_init() };
+        if ptr.is_null() || len < 0 {
+            return Err(DartError::Api("Dart_StringToUTF8 returned null/negative".into()));
+        }
+        let slice = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
+        Ok(slice.to_vec())
+    }
+
+    pub fn to_string_lossy(self) -> Result<String> {
+        let bytes = self.to_utf8()?;
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
+    }
+}
+
+pub struct List<'s>(Handle<'s>);
+
+impl<'s> List<'s> {
+    pub fn new(handle: Handle<'s>) -> Result<Self> {
+        if !handle.is_list() {
+            return Err(DartError::Api("expected a Dart List".into()));
+        }
+        Ok(Self(handle))
+    }
+
+    pub fn len(&self) -> Result<isize> {
+        let mut out = MaybeUninit::<isize>::uninit();
+        check(unsafe { sys::Dart_ListLength(self.0.raw, out.as_mut_ptr() as *mut isize) })?;
+        Ok(unsafe { out.assume_init() })
+    }
+
+    pub fn get(&self, scope: &Scope<'s>, index: isize) -> Result<Handle<'s>> {
+        scope.check(unsafe { sys::Dart_ListGetAt(self.0.raw, index) })
+    }
+
+    pub fn set(&self, index: isize, value: Handle<'s>) -> Result<()> {
+        check(unsafe { sys::Dart_ListSetAt(self.0.raw, index, value.raw) })?;
+        Ok(())
+    }
+}
+
+/// A borrowed view over a Dart `TypedData` / `ByteData` buffer, released on drop.
+pub struct TypedDataView<'s> {
+    object: Handle<'s>,
+    pub ty: sys::Dart_TypedData_Type,
+    pub data: *mut u8,
+    pub len: isize,
+}
+
+impl<'s> TypedDataView<'s> {
+    pub fn acquire(object: Handle<'s>) -> Result<Self> {
+        let mut ty = MaybeUninit::<sys::Dart_TypedData_Type>::uninit();
+        let mut data = MaybeUninit::<*mut c_void>::uninit();
+        let mut len = MaybeUninit::<isize>::uninit();
+
+        check(unsafe {
+            sys::Dart_TypedDataAcquireData(
+                object.raw,
+                ty.as_mut_ptr(),
+                data.as_mut_ptr(),
+                len.as_mut_ptr(),
+            )
+        })?;
+
+        let data = unsafe { data.assume_init() } as *mut u8;
+        let len = unsafe { len.assume_init() };
+        Ok(Self {
+            object,
+            ty: unsafe { ty.assume_init() },
+            data,
+            len,
+        })
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        if self.data.is_null() || self.len <= 0 {
+            return &[];
+        }
+        unsafe { std::slice::from_raw_parts(self.data, self.len as usize) }
+    }
+
+    pub fn as_bytes_mut(&mut self) -> &mut [u8] {
+        if self.data.is_null() || self.len <= 0 {
+            return &mut [];
+        }
+        unsafe { std::slice::from_raw_parts_mut(self.data, self.len as usize) }
+    }
+}
+
+impl Drop for TypedDataView<'_> {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = sys::Dart_TypedDataReleaseData(self.object.raw);
+        }
+    }
+}
+
+/// Convenience: a "null" Dart handle.
+pub fn null_handle<'s>(scope: &Scope<'s>) -> Handle<'s> {
+    // Dart_Null() should never be an error.
+    scope
+        .check(unsafe { sys::Dart_Null() })
+        .unwrap_or_else(|_| Handle {
+            raw: ptr::null_mut(),
+            _marker: PhantomData,
+        })
+}
+

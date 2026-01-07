@@ -2,9 +2,7 @@ use std::process::{Child, Command, Stdio};
 
 use clap::Parser;
 
-use crate::dart::DartEngine;
-
-mod dart;
+use bigfish::dart::DartEngine;
 
 #[derive(clap::Parser)]
 struct Args {
@@ -14,9 +12,6 @@ struct Args {
 
 fn main() {
     let args = Args::parse();
-    let sdl3 = sdl3::init().unwrap();
-    let video_subsystem = sdl3.video().unwrap();
-    let _window = video_subsystem.window("Dart", 800, 600).build().unwrap();
 
     let mut engine = DartEngine::new(
         "./app/lib/main.dart",
@@ -42,13 +37,8 @@ fn main() {
         None
     };
 
-    'main_loop: loop {
-        for event in sdl3.event_pump().unwrap().poll_iter() {
-            if let sdl3::event::Event::Quit { .. } = event {
-                break 'main_loop;
-            }
-        }
-
+    // Basic tick loop (no window/event subsystem in this example binary).
+    for _ in 0..600 {
         let mut isolate = engine.isolate().enter();
         isolate.invoke("tick", &mut []).unwrap();
         isolate.drain_microtask_queue();
