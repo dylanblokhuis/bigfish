@@ -7,13 +7,13 @@ void main() {
 
 @pragma("vm:entry-point")
 void tick() {
-  final here = MyClass();
-  final yo = MyClass.hello();
+  MyClass.initGpu(true);
+  print('Tick!!!');
 }
 
 base class MyClass extends NativeFieldWrapperClass1 {
   MyClass();
 
-  @pragma('vm:external-name', 'hello')
-  external static String hello();
+  @pragma('vm:external-name', 'init_gpu')
+  external static void initGpu(bool a);
 }

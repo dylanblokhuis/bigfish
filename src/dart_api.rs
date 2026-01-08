@@ -10,7 +10,6 @@ pub mod sys {
 }
 
 use std::{
-    cell::UnsafeCell,
     ffi::{CStr, CString},
     marker::PhantomData,
     mem::{ManuallyDrop, MaybeUninit},
@@ -98,7 +97,14 @@ impl Runtime {
                 "DartDll_LoadScript returned null isolate".into(),
             ));
         }
-        Ok(Isolate { raw: isolate })
+        let mut isolate = Isolate { raw: isolate };
+        {
+            let scope = isolate.enter();
+            let library = scope.library();
+            unsafe { sys::Dart_SetNativeResolver(library.raw(), Some(native_resolver), None) };
+        }
+
+        Ok(isolate)
     }
 
     pub fn drain_microtask_queue<'i>(&self, scope: &Scope<'i>) -> Result<Handle<'i>> {
@@ -342,6 +348,119 @@ impl<'s> Handle<'s> {
         let bytes = self.to_utf8()?;
         Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
+
+    pub fn is_null(self) -> bool {
+        unsafe { sys::Dart_IsNull(self.raw) }
+    }
+}
+
+/// Safe wrapper for Dart_NativeArguments
+pub struct NativeArguments<'a> {
+    raw: sys::Dart_NativeArguments,
+    _marker: PhantomData<&'a ()>,
+}
+
+impl<'a> NativeArguments<'a> {
+    pub fn from_raw(raw: sys::Dart_NativeArguments) -> Self {
+        Self {
+            raw,
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn raw(&self) -> sys::Dart_NativeArguments {
+        self.raw
+    }
+
+    pub fn get_arg_count(&self) -> i32 {
+        unsafe { sys::Dart_GetNativeArgumentCount(self.raw) }
+    }
+
+    pub fn get_arg(&self, index: i32) -> Result<Handle<'a>> {
+        let handle = unsafe { sys::Dart_GetNativeArgument(self.raw, index) };
+        if handle.is_null() {
+            return Err(DartError::NullHandle);
+        }
+        if unsafe { sys::Dart_IsError(handle) } {
+            return Err(DartError::from_error_handle(handle));
+        }
+        Ok(Handle {
+            raw: handle,
+            _marker: PhantomData,
+        })
+    }
+
+    pub fn get_string_arg(&self, index: i32) -> Result<Handle<'a>> {
+        let mut peer: *mut c_void = ptr::null_mut();
+        let handle = unsafe { sys::Dart_GetNativeStringArgument(self.raw, index, &mut peer) };
+        if handle.is_null() {
+            return Err(DartError::NullHandle);
+        }
+        if unsafe { sys::Dart_IsError(handle) } {
+            return Err(DartError::from_error_handle(handle));
+        }
+        Ok(Handle {
+            raw: handle,
+            _marker: PhantomData,
+        })
+    }
+
+    pub fn get_integer_arg(&self, index: i32) -> Result<i64> {
+        let mut val: i64 = 0;
+        let handle = unsafe { sys::Dart_GetNativeIntegerArgument(self.raw, index, &mut val) };
+        check(handle)?;
+        Ok(val)
+    }
+
+    pub fn get_boolean_arg(&self, index: i32) -> Result<bool> {
+        let mut val: bool = false;
+        let handle = unsafe { sys::Dart_GetNativeBooleanArgument(self.raw, index, &mut val) };
+        check(handle)?;
+        Ok(val)
+    }
+
+    pub fn get_double_arg(&self, index: i32) -> Result<f64> {
+        let mut val: f64 = 0.0;
+        let handle = unsafe { sys::Dart_GetNativeDoubleArgument(self.raw, index, &mut val) };
+        check(handle)?;
+        Ok(val)
+    }
+
+    pub fn get_native_receiver(&self) -> Result<isize> {
+        let mut val: isize = 0;
+        let handle = unsafe { sys::Dart_GetNativeReceiver(self.raw, &mut val) };
+        check(handle)?;
+        Ok(val)
+    }
+
+    pub fn get_native_fields_of_arg(&self, index: i32, fields: &mut [isize]) -> Result<()> {
+        let handle = unsafe {
+            sys::Dart_GetNativeFieldsOfArgument(
+                self.raw,
+                index,
+                fields.len() as i32,
+                fields.as_mut_ptr(),
+            )
+        };
+        check(handle)?;
+        Ok(())
+    }
+
+    pub fn set_return_value(&self, handle: Handle<'a>) {
+        unsafe { sys::Dart_SetReturnValue(self.raw, handle.raw()) }
+    }
+
+    pub fn set_bool_return_value(&self, val: bool) {
+        unsafe { sys::Dart_SetBooleanReturnValue(self.raw, val) }
+    }
+
+    pub fn set_int_return_value(&self, val: i64) {
+        unsafe { sys::Dart_SetIntegerReturnValue(self.raw, val) }
+    }
+
+    pub fn set_double_return_value(&self, val: f64) {
+        unsafe { sys::Dart_SetDoubleReturnValue(self.raw, val) }
+    }
 }
 
 pub struct List<'s>(Handle<'s>);
@@ -436,3 +555,37 @@ pub fn null_handle<'s>(scope: &Scope<'s>) -> Handle<'s> {
             _marker: PhantomData,
         })
 }
+
+unsafe extern "C" fn native_resolver(
+    name: sys::Dart_Handle,
+    _num_of_arguments: ::std::os::raw::c_int,
+    _auto_setup_scope: *mut bool,
+) -> sys::Dart_NativeFunction {
+    let mut cstr = MaybeUninit::<*const i8>::uninit();
+    let res = sys::Dart_StringToCString(name, cstr.as_mut_ptr());
+    debug_assert!(!res.is_null(), "Dart_StringToCString returned null");
+    let name = CStr::from_ptr(cstr.assume_init());
+    for function in inventory::iter::<NativeFunction>() {
+        if function.name == name.to_str().unwrap() {
+            return Some(function.function);
+        }
+    }
+
+    None
+}
+
+pub struct NativeFunction {
+    name: &'static str,
+    function: unsafe extern "C" fn(args: sys::Dart_NativeArguments),
+}
+
+impl NativeFunction {
+    pub const fn new(
+        name: &'static str,
+        function: unsafe extern "C" fn(args: sys::Dart_NativeArguments),
+    ) -> Self {
+        Self { name, function }
+    }
+}
+
+inventory::collect!(NativeFunction);

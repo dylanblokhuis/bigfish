@@ -3,10 +3,18 @@ name = "bigfish"
 version = "0.1.0"
 edition = "2021"
 
+[workspace]
+members = [
+    ".",
+    "bigfish_macros",
+]
+
 [dependencies]
 anyhow = "1.0.100"
 clap = { version = "4.5.54", features = ["derive"] }
+inventory = "0.3.21"
 thiserror = "2.0.16"
+bigfish_macros = { path = "bigfish_macros" }
 
 [build-dependencies]
 bindgen = "0.72.1"
