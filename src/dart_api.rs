@@ -1,8 +1,19 @@
-use crate::sys;
+pub mod sys {
+    #![allow(
+        non_upper_case_globals,
+        non_camel_case_types,
+        non_snake_case,
+        unused,
+        clippy::all
+    )]
+    include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
+}
+
 use std::{
+    cell::UnsafeCell,
     ffi::{CStr, CString},
     marker::PhantomData,
-    mem::MaybeUninit,
+    mem::{ManuallyDrop, MaybeUninit},
     os::raw::c_void,
     ptr,
 };
@@ -47,9 +58,26 @@ pub struct Runtime {
     _priv: (),
 }
 
+pub struct RuntimeConfig {
+    pub service_port: u16,
+    pub start_service_isolate: bool,
+}
+
+impl RuntimeConfig {
+    pub fn new(service_port: u16, start_service_isolate: bool) -> Self {
+        Self {
+            service_port,
+            start_service_isolate,
+        }
+    }
+}
 impl Runtime {
-    pub fn initialize(config: &sys::DartDllConfig) -> Result<Self> {
-        let ok = unsafe { sys::DartDll_Initialize(config) };
+    pub fn initialize(config: RuntimeConfig) -> Result<Self> {
+        let config = sys::DartDllConfig {
+            service_port: config.service_port as i32,
+            start_service_isolate: config.start_service_isolate,
+        };
+        let ok = unsafe { sys::DartDll_Initialize(&config) };
         if !ok {
             return Err(DartError::Api("DartDll_Initialize returned false".into()));
         }
@@ -62,9 +90,13 @@ impl Runtime {
         package_config: &CStr,
         isolate_data: *mut c_void,
     ) -> Result<Isolate> {
-        let isolate = unsafe { sys::DartDll_LoadScript(script_uri.as_ptr(), package_config.as_ptr(), isolate_data) };
+        let isolate = unsafe {
+            sys::DartDll_LoadScript(script_uri.as_ptr(), package_config.as_ptr(), isolate_data)
+        };
         if isolate.is_null() {
-            return Err(DartError::Api("DartDll_LoadScript returned null isolate".into()));
+            return Err(DartError::Api(
+                "DartDll_LoadScript returned null isolate".into(),
+            ));
         }
         Ok(Isolate { raw: isolate })
     }
@@ -88,13 +120,24 @@ pub struct Isolate {
 }
 
 impl Isolate {
+    /// Creates a scope that Rust won't exit, it will be handled by the Dart VM. Hence we use ManuallyDrop to avoid double drop.
+    pub fn current<'i>() -> Result<ManuallyDrop<Scope<'i>>> {
+        let isolate = unsafe { sys::Dart_CurrentIsolate() };
+        if isolate.is_null() {
+            return Err(DartError::Api("Dart_CurrentIsolate returned null".into()));
+        }
+        Ok(ManuallyDrop::new(Scope {
+            library: unsafe { sys::Dart_RootLibrary() },
+            _marker: PhantomData,
+        }))
+    }
+
     pub fn enter(&mut self) -> Scope<'_> {
         unsafe {
             sys::Dart_EnterIsolate(self.raw);
             sys::Dart_EnterScope();
             let lib = sys::Dart_RootLibrary();
             Scope {
-                _isolate: self,
                 library: lib,
                 _marker: PhantomData,
             }
@@ -119,7 +162,6 @@ impl Drop for Isolate {
 ///
 /// All [`Handle`] values produced from this scope are only valid until this is dropped.
 pub struct Scope<'i> {
-    _isolate: &'i mut Isolate,
     library: sys::Dart_Handle,
     _marker: PhantomData<&'i mut ()>,
 }
@@ -141,23 +183,15 @@ impl<'i> Scope<'i> {
     }
 
     pub fn new_string(&self, s: &str) -> Result<Handle<'i>> {
-        let s = CString::new(s).map_err(|_| DartError::Api("string contained interior NUL".into()))?;
+        let s =
+            CString::new(s).map_err(|_| DartError::Api("string contained interior NUL".into()))?;
         self.check(unsafe { sys::Dart_NewStringFromCString(s.as_ptr()) })
     }
 
-    pub fn invoke(
-        &mut self,
-        name: &str,
-        args: &mut [sys::Dart_Handle],
-    ) -> Result<Handle<'i>> {
+    pub fn invoke(&mut self, name: &str, args: &mut [sys::Dart_Handle]) -> Result<Handle<'i>> {
         let name = self.new_string(name)?;
         self.check(unsafe {
-            sys::Dart_Invoke(
-                self.library,
-                name.raw,
-                args.len() as i32,
-                args.as_mut_ptr(),
-            )
+            sys::Dart_Invoke(self.library, name.raw, args.len() as i32, args.as_mut_ptr())
         })
     }
 
@@ -182,6 +216,11 @@ impl<'i> Scope<'i> {
                 CStr::from_ptr(msg_ptr).to_string_lossy().into_owned()
             }
         }
+    }
+
+    pub fn get_class(&self, class_name: &str) -> Result<Handle<'i>> {
+        let class_name = self.new_string(class_name)?;
+        self.check(unsafe { sys::Dart_GetClass(self.library, class_name.raw) })
     }
 }
 
@@ -291,7 +330,9 @@ impl<'s> Handle<'s> {
         let ptr = unsafe { ptr_out.assume_init() };
         let len = unsafe { len_out.assume_init() };
         if ptr.is_null() || len < 0 {
-            return Err(DartError::Api("Dart_StringToUTF8 returned null/negative".into()));
+            return Err(DartError::Api(
+                "Dart_StringToUTF8 returned null/negative".into(),
+            ));
         }
         let slice = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
         Ok(slice.to_vec())
@@ -395,4 +436,3 @@ pub fn null_handle<'s>(scope: &Scope<'s>) -> Handle<'s> {
             _marker: PhantomData,
         })
 }
-
