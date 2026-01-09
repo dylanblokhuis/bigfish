@@ -1,44 +1,22 @@
-import 'dart:nativewrappers';
+import 'native.dart';
 
 void main() {
-  final window = Window();
-  window.createWindow(800, 600, 'Hello World');
+  final window = Window(width: 800, height: 600, title: 'Hello World');
 
-  // Set up update and present callbacks
-  window.setUpdateCallback(update);
+  window.onUpdate(() => update());
+  window.onPresent((interpolation) => present(interpolation));
 
-  window.setPresentCallback(present);
-
+  // we poll here because if we use a long lived function, we cant hot reload anything
   while (window.poll()) {}
 }
 
+// update game logic at 60 ticks
 void update() {
-  print('Update');
+  print('Update!');
 }
 
-void present() {
-  print("Present!");
-}
-
-base class MyClass extends NativeFieldWrapperClass1 {
-  MyClass();
-
-  @pragma('vm:external-name', 'init_gpu')
-  external static void initGpu(bool a);
-}
-
-base class Window extends NativeFieldWrapperClass1 {
-  Window();
-
-  @pragma('vm:external-name', 'create_window')
-  external void createWindow(int width, int height, String title);
-
-  @pragma('vm:external-name', 'set_update_callback')
-  external void setUpdateCallback(void Function() callback);
-
-  @pragma('vm:external-name', 'set_present_callback')
-  external void setPresentCallback(void Function() callback);
-
-  @pragma('vm:external-name', 'poll')
-  external bool poll();
+// we can render here, will loop as fast as possible, with the interpolation value being the amount of time that has passed since the last update
+// can be used to interpolate values to not have janky movement
+void present(double interpolation) {
+  print("Present! $interpolation");
 }

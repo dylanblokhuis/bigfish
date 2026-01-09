@@ -1,14 +1,13 @@
 use bigfish_macros::native_func;
-use std::collections::HashMap;
-use std::sync::{Arc, LazyLock, Mutex};
 
-use crate::dart_api::{native_resolver, sys, Isolate, NativeArguments, PersistentHandle};
+use crate::dart_api::{Isolate, NativeArguments, PersistentHandle};
 
 pub struct Window {
     ctx: sdl3::Sdl,
     window: sdl3::video::Window,
     update_callback: Option<PersistentHandle>,
     present_callback: Option<PersistentHandle>,
+    clock: chron::Clock,
 }
 
 // Safety: SDL windows are not thread-safe, but we protect all access with a Mutex.
@@ -32,11 +31,18 @@ fn create_window(args: NativeArguments) {
         .build()
         .unwrap();
 
+    use std::num::NonZeroU32;
+
+    let updates_per_second = NonZeroU32::new(60).unwrap();
+
+    let clock = chron::Clock::new(updates_per_second);
+
     let window_struct = Box::new(Window {
         ctx,
         window,
         update_callback: None,
         present_callback: None,
+        clock,
     });
 
     // Also set up finalizable handle for cleanup
@@ -45,7 +51,7 @@ fn create_window(args: NativeArguments) {
 }
 
 #[native_func]
-fn set_update_callback(args: NativeArguments) {
+fn on_update(args: NativeArguments) {
     let instance = args.get_arg(0).unwrap();
     let callback = args.get_arg(1).unwrap();
 
@@ -68,7 +74,7 @@ fn set_update_callback(args: NativeArguments) {
 }
 
 #[native_func]
-fn set_present_callback(args: NativeArguments) {
+fn on_present(args: NativeArguments) {
     let instance = args.get_arg(0).unwrap();
     let callback = args.get_arg(1).unwrap();
 
@@ -105,38 +111,43 @@ fn poll(args: NativeArguments) {
 
     args.set_bool_return_value(should_continue);
 
-    // Call update callback
-    {
-        if let Some(ref update_cb) = window.update_callback {
-            let mut callback_args: [crate::dart_api::sys::Dart_Handle; 0] = [];
-            let result = unsafe {
-                crate::dart_api::sys::Dart_InvokeClosure(
-                    update_cb.raw(),
-                    callback_args.len() as i32,
-                    callback_args.as_mut_ptr(),
-                )
-            };
-            // Check for errors but don't fail the loop
-            if unsafe { crate::dart_api::sys::Dart_IsError(result) } {
-                eprintln!("Error in update callback");
+    if let Some(tick) = window.clock.next() {
+        match tick {
+            chron::Tick::Update => {
+                if let Some(ref update_cb) = window.update_callback {
+                    let mut callback_args: [crate::dart_api::sys::Dart_Handle; 0] = [];
+                    let result = unsafe {
+                        crate::dart_api::sys::Dart_InvokeClosure(
+                            update_cb.raw(),
+                            callback_args.len() as i32,
+                            callback_args.as_mut_ptr(),
+                        )
+                    };
+                    // Check for errors but don't fail the loop
+                    if unsafe { crate::dart_api::sys::Dart_IsError(result) } {
+                        eprintln!("Error in update callback");
+                    }
+                }
             }
-        }
-    }
+            chron::Tick::Render { interpolation } => {
+                if let Some(ref present_cb) = window.present_callback {
+                    let scope = Isolate::current().unwrap();
+                    let interpolation_value = scope.new_double(interpolation as f64).unwrap();
 
-    // Call present callback
-    {
-        if let Some(ref present_cb) = window.present_callback {
-            let mut callback_args: [crate::dart_api::sys::Dart_Handle; 0] = [];
-            let result = unsafe {
-                crate::dart_api::sys::Dart_InvokeClosure(
-                    present_cb.raw(),
-                    callback_args.len() as i32,
-                    callback_args.as_mut_ptr(),
-                )
-            };
-            // Check for errors but don't fail the loop
-            if unsafe { crate::dart_api::sys::Dart_IsError(result) } {
-                eprintln!("Error in present callback");
+                    let mut callback_args: [crate::dart_api::sys::Dart_Handle; 1] =
+                        [interpolation_value.raw()];
+                    let result = unsafe {
+                        crate::dart_api::sys::Dart_InvokeClosure(
+                            present_cb.raw(),
+                            callback_args.len() as i32,
+                            callback_args.as_mut_ptr(),
+                        )
+                    };
+                    // Check for errors but don't fail the loop
+                    if unsafe { crate::dart_api::sys::Dart_IsError(result) } {
+                        eprintln!("Error in present callback");
+                    }
+                }
             }
         }
     }

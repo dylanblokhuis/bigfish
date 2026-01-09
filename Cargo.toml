@@ -13,6 +13,7 @@ inventory = "0.3.21"
 thiserror = "2.0.16"
 bigfish_macros = { path = "bigfish_macros" }
 sdl3 = "0.17.2"
+chron = "0.1.6"
 
 [build-dependencies]
 bindgen = "0.72.1"

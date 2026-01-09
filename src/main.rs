@@ -47,9 +47,8 @@ fn main() {
     };
 
     isolate.enter().invoke("main", &mut []).unwrap();
-    // engine.drain_microtask_queue(&isolate.enter()).unwrap();
 
-    println!("Main dart func finished..");
+    println!("Exiting...");
 
     // Clean up watcher when we exit.
     if let Some(mut child) = hot_reload_proc.take() {

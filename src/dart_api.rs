@@ -205,6 +205,18 @@ impl<'i> Scope<'i> {
         let class_name = self.new_string(class_name)?;
         self.check(unsafe { sys::Dart_GetClass(self.library, class_name.raw) })
     }
+
+    pub fn new_double(&self, value: f64) -> Result<Handle<'i>> {
+        self.check(unsafe { sys::Dart_NewDouble(value) })
+    }
+
+    pub fn new_integer(&self, value: i64) -> Result<Handle<'i>> {
+        self.check(unsafe { sys::Dart_NewInteger(value) })
+    }
+
+    pub fn new_boolean(&self, value: bool) -> Result<Handle<'i>> {
+        self.check(unsafe { sys::Dart_NewBoolean(value) })
+    }
 }
 
 impl Drop for Scope<'_> {

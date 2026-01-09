@@ -74,6 +74,7 @@ dependencies = [
  "anyhow",
  "bigfish_macros",
  "bindgen",
+ "chron",
  "clap",
  "inventory",
  "sdl3",
@@ -129,6 +130,12 @@ name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
+
+[[package]]
+name = "chron"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "902a6b86f517bf4c50564bfd1b3d035a58054c4c1fc6ffcbaa8eb016672fc0eb"
 
 [[package]]
 name = "clang-sys"
