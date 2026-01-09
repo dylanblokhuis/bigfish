@@ -201,29 +201,6 @@ impl<'i> Scope<'i> {
         })
     }
 
-    pub fn instance_get_type(&self, instance: Handle<'i>) -> Result<Handle<'i>> {
-        self.check(unsafe { sys::Dart_InstanceGetType(instance.raw) })
-    }
-
-    pub fn class_name(&self, cls_type: Handle<'i>) -> Result<Handle<'i>> {
-        self.check(unsafe { sys::Dart_ClassName(cls_type.raw) })
-    }
-
-    pub fn function_name(&self, function: Handle<'i>) -> Result<Handle<'i>> {
-        self.check(unsafe { sys::Dart_FunctionName(function.raw) })
-    }
-
-    pub fn get_error_message(&mut self, error: sys::Dart_Handle) -> String {
-        unsafe {
-            let msg_ptr = sys::Dart_GetError(error);
-            if msg_ptr.is_null() {
-                "<Dart_GetError returned null>".to_string()
-            } else {
-                CStr::from_ptr(msg_ptr).to_string_lossy().into_owned()
-            }
-        }
-    }
-
     pub fn get_class(&self, class_name: &str) -> Result<Handle<'i>> {
         let class_name = self.new_string(class_name)?;
         self.check(unsafe { sys::Dart_GetClass(self.library, class_name.raw) })
@@ -351,6 +328,113 @@ impl<'s> Handle<'s> {
 
     pub fn is_null(self) -> bool {
         unsafe { sys::Dart_IsNull(self.raw) }
+    }
+
+    pub fn instance_get_type(self, scope: &Scope<'s>) -> Result<Handle<'s>> {
+        scope.check(unsafe { sys::Dart_InstanceGetType(self.raw) })
+    }
+
+    pub fn class_name(self, scope: &Scope<'s>) -> Result<Handle<'s>> {
+        scope.check(unsafe { sys::Dart_ClassName(self.raw) })
+    }
+
+    pub fn function_name(self, scope: &Scope<'s>) -> Result<Handle<'s>> {
+        scope.check(unsafe { sys::Dart_FunctionName(self.raw) })
+    }
+
+    pub fn get_error_message(self) -> String {
+        unsafe {
+            let msg_ptr = sys::Dart_GetError(self.raw);
+            if msg_ptr.is_null() {
+                "<Dart_GetError returned null>".to_string()
+            } else {
+                CStr::from_ptr(msg_ptr).to_string_lossy().into_owned()
+            }
+        }
+    }
+
+    /// Creates a finalizable handle that automatically drops the boxed pointer when the Dart object is garbage collected.
+    ///
+    /// Takes ownership of the `Box<T>` and converts it to a raw pointer. When the Dart object is garbage collected,
+    /// the boxed value will be automatically dropped.
+    pub fn new_finalizable_handle<T>(self, peer: Box<T>) {
+        unsafe extern "C" fn finalizer<T>(_isolate_callback_data: *mut c_void, peer: *mut c_void) {
+            println!("Finalizing handle");
+            // Convert the peer back to Box<T> and drop it
+            let boxed = Box::from_raw(peer as *mut T);
+            drop(boxed);
+        }
+
+        let peer_ptr = Box::into_raw(peer);
+        unsafe {
+            sys::Dart_NewFinalizableHandle(
+                self.raw,
+                peer_ptr as *mut c_void,
+                0,
+                Some(finalizer::<T>),
+            );
+        }
+    }
+
+    pub fn is_closure(self) -> bool {
+        unsafe { sys::Dart_IsClosure(self.raw) }
+    }
+
+    pub fn set_peer<T>(self, peer: Box<T>) {
+        let peer_ptr = Box::into_raw(peer);
+        unsafe { sys::Dart_SetPeer(self.raw, peer_ptr as *mut c_void) };
+    }
+
+    pub fn get_peer<'a, T>(self) -> Result<&'a mut T> {
+        let mut peer = MaybeUninit::<*mut T>::uninit();
+        check(unsafe { sys::Dart_GetPeer(self.raw, peer.as_mut_ptr() as *mut *mut c_void) })?;
+        Ok(unsafe { &mut *peer.assume_init() })
+    }
+}
+
+/// A persistent handle that can be stored across scopes.
+///
+/// Dart persistent handles are safe to send between threads as long as
+/// isolate entry/exit is properly synchronized (which we do in the event loop).
+pub struct PersistentHandle {
+    raw: sys::Dart_PersistentHandle,
+}
+
+// Safety: Dart persistent handles can be safely sent between threads.
+// The Dart VM handles thread safety internally, and we properly synchronize
+// isolate entry/exit in our event loop.
+unsafe impl Send for PersistentHandle {}
+unsafe impl Sync for PersistentHandle {}
+
+impl PersistentHandle {
+    pub fn new(handle: Handle<'_>) -> Result<Self> {
+        let persistent = unsafe { sys::Dart_NewPersistentHandle(handle.raw()) };
+        if persistent.is_null() {
+            return Err(DartError::NullHandle);
+        }
+        Ok(Self { raw: persistent })
+    }
+
+    pub fn invoke<'a>(
+        &self,
+        scope: &mut Scope<'a>,
+        args: &mut [sys::Dart_Handle],
+    ) -> Result<Handle<'a>> {
+        scope.check(unsafe {
+            sys::Dart_InvokeClosure(self.raw, args.len() as i32, args.as_mut_ptr())
+        })
+    }
+
+    pub fn raw(&self) -> sys::Dart_PersistentHandle {
+        self.raw
+    }
+}
+
+impl Drop for PersistentHandle {
+    fn drop(&mut self) {
+        unsafe {
+            sys::Dart_DeletePersistentHandle(self.raw);
+        }
     }
 }
 
@@ -556,7 +640,7 @@ pub fn null_handle<'s>(scope: &Scope<'s>) -> Handle<'s> {
         })
 }
 
-unsafe extern "C" fn native_resolver(
+pub unsafe extern "C" fn native_resolver(
     name: sys::Dart_Handle,
     _num_of_arguments: ::std::os::raw::c_int,
     _auto_setup_scope: *mut bool,

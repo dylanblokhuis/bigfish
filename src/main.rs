@@ -4,6 +4,7 @@ use clap::Parser;
 
 mod dart_api;
 mod gpu;
+mod window;
 use dart_api::{Runtime, RuntimeConfig};
 
 #[derive(clap::Parser)]
@@ -45,14 +46,10 @@ fn main() {
         None
     };
 
-    for _ in 0..600 {
-        let mut scope = isolate.enter();
-        scope.invoke("tick", &mut []).unwrap();
-        engine.drain_microtask_queue(&scope).unwrap();
+    isolate.enter().invoke("main", &mut []).unwrap();
+    // engine.drain_microtask_queue(&isolate.enter()).unwrap();
 
-        // 60 ticks
-        std::thread::sleep(std::time::Duration::from_millis(16));
-    }
+    println!("Main dart func finished..");
 
     // Clean up watcher when we exit.
     if let Some(mut child) = hot_reload_proc.take() {
