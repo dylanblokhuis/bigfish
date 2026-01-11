@@ -1,6 +1,6 @@
 use bigfish_macros::native_func;
 
-use crate::dart_api::{Isolate, NativeArguments, PersistentHandle};
+use crate::dart_api::{Isolate, NativeArguments, NativeFunction, PersistentHandle};
 
 pub struct Window {
     ctx: sdl3::Sdl,
@@ -49,6 +49,8 @@ fn create_window(args: NativeArguments) {
     instance.set_peer(window_struct);
     // instance.new_finalizable_handle(window_struct
 }
+
+inventory::submit!(NativeFunction::new("create_window", __shim_create_window));
 
 #[native_func]
 fn on_update(args: NativeArguments) {

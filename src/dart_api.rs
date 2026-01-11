@@ -17,6 +17,8 @@ use std::{
     ptr,
 };
 
+use crate::dart_api::sys::{Dart_ExitScope, Dart_LookupLibrary};
+
 pub type Result<T> = std::result::Result<T, DartError>;
 
 #[derive(Debug, thiserror::Error)]
@@ -102,6 +104,23 @@ impl Runtime {
             let scope = isolate.enter();
             let library = scope.library();
             unsafe { sys::Dart_SetNativeResolver(library.raw(), Some(native_resolver), None) };
+
+            // get loaded libraries and set native resolver
+            // let loaded_libraries = unsafe { sys::Dart_GetLoadedLibraries() };
+
+            // let mut len_ptr = MaybeUninit::<isize>::uninit();
+            // unsafe { sys::Dart_ListLength(loaded_libraries, len_ptr.as_mut_ptr()) };
+            // let len = unsafe { len_ptr.assume_init() };
+            // for i in 0..len {
+            //     let library = unsafe { sys::Dart_ListGetAt(loaded_libraries, i) };
+            //     unsafe { sys::Dart_SetNativeResolver(library, Some(native_resolver), None) };
+            // }
+
+            let library = unsafe {
+                let url = scope.new_string("package:app/native.dart").unwrap();
+                Dart_LookupLibrary(url.raw)
+            };
+            unsafe { sys::Dart_SetNativeResolver(library, Some(native_resolver), None) };
         }
 
         Ok(isolate)
@@ -149,18 +168,24 @@ impl Isolate {
             }
         }
     }
+
+    /// Shutdown the isolate. This should be called before dropping the Runtime.
+    pub fn shutdown(&mut self) {
+        unsafe {
+            if !self.raw.is_null() {
+                sys::Dart_ShutdownIsolate();
+                // Mark as null to prevent double shutdown in drop
+                self.raw = std::ptr::null_mut();
+            }
+        }
+    }
 }
 
 impl Drop for Isolate {
     fn drop(&mut self) {
-        // Best-effort isolate shutdown. The API requires a current isolate.
-        unsafe {
-            if !self.raw.is_null() {
-                sys::Dart_EnterIsolate(self.raw);
-                sys::Dart_ShutdownIsolate();
-                sys::Dart_ExitIsolate();
-            }
-        }
+        // Best-effort isolate shutdown. Only try if not already shut down.
+        // This is a safety net in case shutdown() wasn't called explicitly.
+        self.shutdown();
     }
 }
 

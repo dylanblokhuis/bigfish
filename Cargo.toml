@@ -14,6 +14,7 @@ thiserror = "2.0.16"
 bigfish_macros = { path = "bigfish_macros" }
 sdl3 = "0.17.2"
 chron = "0.1.6"
+ctrlc = "3.4.0"
 
 [build-dependencies]
 bindgen = "0.72.1"

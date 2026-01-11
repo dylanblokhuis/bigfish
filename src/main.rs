@@ -1,4 +1,5 @@
 use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
 
 use clap::Parser;
 
@@ -16,11 +17,29 @@ struct Args {
 fn main() {
     let args = Args::parse();
 
+    // If we spawn the Dart hot-reload watcher, ensure Ctrl+C always kills it.
+    // Without this, interrupting the Rust process can leave the Dart process running.
+    let hot_reload_proc: Arc<Mutex<Option<Child>>> = Arc::new(Mutex::new(None));
+    {
+        let hot_reload_proc = Arc::clone(&hot_reload_proc);
+        ctrlc::set_handler(move || {
+            eprintln!("\nInterrupted. Shutting down...");
+            if let Ok(mut guard) = hot_reload_proc.lock() {
+                if let Some(mut child) = guard.take() {
+                    let _ = child.kill();
+                }
+            }
+            std::process::exit(130);
+        })
+        .expect("failed to set Ctrl+C handler");
+    }
+
     let engine = Runtime::initialize(RuntimeConfig {
         service_port: 5858,
         start_service_isolate: args.hmr,
     })
     .unwrap();
+
     let mut isolate = engine
         .load_script(
             c"./app/lib/main.dart",
@@ -31,27 +50,28 @@ fn main() {
 
     // Start the Dart hot-reload watcher CLI (best-effort).
     // Requested command: `dart run cli/bin/cli.dart app/lib`
-    let mut hot_reload_proc: Option<Child> = if args.hmr {
-        Some(
-            Command::new("dart")
-                .args(["run", "cli/bin/cli.dart", "app/lib"])
-                .stdin(Stdio::null())
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit())
-                .spawn()
-                .ok()
-                .unwrap(),
-        )
-    } else {
-        None
-    };
+    if args.hmr {
+        let child = Command::new("dart")
+            .args(["run", "cli/bin/cli.dart", "app/lib"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .expect("failed to spawn hot-reload watcher");
+
+        *hot_reload_proc.lock().expect("poisoned watcher lock") = Some(child);
+    }
 
     isolate.enter().invoke("main", &mut []).unwrap();
 
     println!("Exiting...");
 
     // Clean up watcher when we exit.
-    if let Some(mut child) = hot_reload_proc.take() {
+    if let Some(mut child) = hot_reload_proc
+        .lock()
+        .expect("poisoned watcher lock")
+        .take()
+    {
         let _ = child.kill();
         let _ = child.wait();
     }
