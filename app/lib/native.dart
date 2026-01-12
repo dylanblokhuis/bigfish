@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:nativewrappers';
 
 base class Window extends NativeFieldWrapperClass1 {
@@ -24,17 +23,17 @@ base class Gpu extends NativeFieldWrapperClass1 {
     _initGpu(window);
   }
 
-  @pragma('vm:external-name', 'init_gpu')
+  @pragma('vm:external-name', 'Gpu_init')
   external void _initGpu(Window window);
 
-  @pragma('vm:external-name', 'begin_command_buffer')
+  @pragma('vm:external-name', 'Gpu_begin_command_buffer')
   external CommandBuffer beginCommandBuffer();
 
-  @pragma('vm:external-name', 'end_command_buffer')
+  @pragma('vm:external-name', 'Gpu_end_command_buffer')
   external void endCommandBuffer(CommandBuffer commandBuffer);
 
-  @pragma('vm:external-name', 'gpu_draw')
-  external void draw();
+  @pragma('vm:external-name', 'Gpu_compile_render_pipeline')
+  external void compileRenderPipeline(RenderPipelineDescriptor descriptor);
 }
 
 @pragma("vm:entry-point")
@@ -44,4 +43,255 @@ base class CommandBuffer extends NativeFieldWrapperClass1 {
 
   @pragma("vm:entry-point")
   external Gpu gpu;
+}
+
+class RenderPipelineDescriptor {
+  String label = "Unnamed Render Pipeline Descriptor";
+  List<RenderPipelineDescriptorColorAttachment> colorAttachments;
+  PixelFormat depthAttachmentPixelFormat = PixelFormat.invalid;
+  PixelFormat stencilAttachmentPixelFormat = PixelFormat.invalid;
+  PrimitiveTopology primitiveTopology = PrimitiveTopology.unspecified;
+  ShaderLibrary vertexShader;
+  ShaderLibrary fragmentShader;
+
+  RenderPipelineDescriptor({
+    required this.colorAttachments,
+    required this.vertexShader,
+    required this.fragmentShader,
+  });
+}
+
+class ShaderLibrary {
+  String source;
+  String entryPoint;
+  ShaderLibrary({required this.source, required this.entryPoint});
+}
+
+class RenderPipelineDescriptorColorAttachment {
+  PixelFormat pixelFormat;
+  ColorWriteMask writeMask = ColorWriteMask.all;
+  bool blendEnabled = false;
+  BlendOp rgbBlendOp = BlendOp.add;
+  BlendOp alphaBlendOp = BlendOp.add;
+  BlendFactor sourceAlphaBlendFactor = BlendFactor.one;
+  BlendFactor destinationAlphaBlendFactor = BlendFactor.zero;
+  BlendFactor sourceRgbBlendFactor = BlendFactor.one;
+  BlendFactor destinationRgbBlendFactor = BlendFactor.zero;
+  RenderPipelineDescriptorColorAttachment({required this.pixelFormat});
+}
+
+enum BlendOp { add, subtract, reverseSubtract, min, max }
+
+enum PixelFormat {
+  invalid(0),
+  a8Unorm(1),
+  r8Unorm(10),
+  r8UnormSrgb(11),
+  r8Snorm(12),
+  r8Uint(13),
+  r8Sint(14),
+  r16Unorm(20),
+  r16Snorm(22),
+  r16Uint(23),
+  r16Sint(24),
+  r16Float(25),
+  rg8Unorm(30),
+  rg8UnormSrgb(31),
+  rg8Snorm(32),
+  rg8Uint(33),
+  rg8Sint(34),
+  b5g6r5Unorm(40),
+  a1bgr5Unorm(41),
+  abgr4Unorm(42),
+  bgr5a1Unorm(43),
+  r32Uint(53),
+  r32Sint(54),
+  r32Float(55),
+  rg16Unorm(60),
+  rg16Snorm(62),
+  rg16Uint(63),
+  rg16Sint(64),
+  rg16Float(65),
+  rgba8Unorm(70),
+  rgba8UnormSrgb(71),
+  rgba8Snorm(72),
+  rgba8Uint(73),
+  rgba8Sint(74),
+  bgra8Unorm(80),
+  bgra8UnormSrgb(81),
+  rgb10a2Unorm(90),
+  rgb10a2Uint(91),
+  rg11b10Float(92),
+  rgb9e5Float(93),
+  bgr10a2Unorm(94),
+  bgr10Xr(554),
+  bgr10XrSrgb(555),
+  rg32Uint(103),
+  rg32Sint(104),
+  rg32Float(105),
+  rgba16Unorm(110),
+  rgba16Snorm(112),
+  rgba16Uint(113),
+  rgba16Sint(114),
+  rgba16Float(115),
+  bgra10Xr(552),
+  bgra10XrSrgb(553),
+  rgba32Uint(123),
+  rgba32Sint(124),
+  rgba32Float(125),
+  bc1Rgba(130),
+  bc1RgbaSrgb(131),
+  bc2Rgba(132),
+  bc2RgbaSrgb(133),
+  bc3Rgba(134),
+  bc3RgbaSrgb(135),
+  bc4RUnorm(140),
+  bc4RSnorm(141),
+  bc5RgUnorm(142),
+  bc5RgSnorm(143),
+  bc6hRgbFloat(150),
+  bc6hRgbUfloat(151),
+  bc7RgbaUnorm(152),
+  bc7RgbaUnormSrgb(153),
+
+  @Deprecated('Usage of ASTC/ETC2/BC formats is recommended instead.')
+  pvrtcRgb2bpp(160),
+  @Deprecated('Usage of ASTC/ETC2/BC formats is recommended instead.')
+  pvrtcRgb2bppSrgb(161),
+  @Deprecated('Usage of ASTC/ETC2/BC formats is recommended instead.')
+  pvrtcRgb4bpp(162),
+  @Deprecated('Usage of ASTC/ETC2/BC formats is recommended instead.')
+  pvrtcRgb4bppSrgb(163),
+  @Deprecated('Usage of ASTC/ETC2/BC formats is recommended instead.')
+  pvrtcRgba2bpp(164),
+  @Deprecated('Usage of ASTC/ETC2/BC formats is recommended instead.')
+  pvrtcRgba2bppSrgb(165),
+  @Deprecated('Usage of ASTC/ETC2/BC formats is recommended instead.')
+  pvrtcRgba4bpp(166),
+  @Deprecated('Usage of ASTC/ETC2/BC formats is recommended instead.')
+  pvrtcRgba4bppSrgb(167),
+
+  eacR11Unorm(170),
+  eacR11Snorm(172),
+  eacRg11Unorm(174),
+  eacRg11Snorm(176),
+  eacRgba8(178),
+  eacRgba8Srgb(179),
+  etc2Rgb8(180),
+  etc2Rgb8Srgb(181),
+  etc2Rgb8a1(182),
+  etc2Rgb8a1Srgb(183),
+  astc4x4Srgb(186),
+  astc5x4Srgb(187),
+  astc5x5Srgb(188),
+  astc6x5Srgb(189),
+  astc6x6Srgb(190),
+  astc8x5Srgb(192),
+  astc8x6Srgb(193),
+  astc8x8Srgb(194),
+  astc10x5Srgb(195),
+  astc10x6Srgb(196),
+  astc10x8Srgb(197),
+  astc10x10Srgb(198),
+  astc12x10Srgb(199),
+  astc12x12Srgb(200),
+  astc4x4Ldr(204),
+  astc5x4Ldr(205),
+  astc5x5Ldr(206),
+  astc6x5Ldr(207),
+  astc6x6Ldr(208),
+  astc8x5Ldr(210),
+  astc8x6Ldr(211),
+  astc8x8Ldr(212),
+  astc10x5Ldr(213),
+  astc10x6Ldr(214),
+  astc10x8Ldr(215),
+  astc10x10Ldr(216),
+  astc12x10Ldr(217),
+  astc12x12Ldr(218),
+  astc4x4Hdr(222),
+  astc5x4Hdr(223),
+  astc5x5Hdr(224),
+  astc6x5Hdr(225),
+  astc6x6Hdr(226),
+  astc8x5Hdr(228),
+  astc8x6Hdr(229),
+  astc8x8Hdr(230),
+  astc10x5Hdr(231),
+  astc10x6Hdr(232),
+  astc10x8Hdr(233),
+  astc10x10Hdr(234),
+  astc12x10Hdr(235),
+  astc12x12Hdr(236),
+  gbgr422(240),
+  bgrg422(241),
+  depth16Unorm(250),
+  depth32Float(252),
+  stencil8(253),
+  depth24UnormStencil8(255),
+  depth32FloatStencil8(260),
+  x32Stencil8(261),
+  x24Stencil8(262),
+  unspecialized(263);
+
+  final int value;
+  const PixelFormat(this.value);
+}
+
+extension type const ColorWriteMask(int rawValue) {
+  static const ColorWriteMask none = ColorWriteMask(0);
+  static const ColorWriteMask red = ColorWriteMask(0x1 << 3);
+  static const ColorWriteMask green = ColorWriteMask(0x1 << 2);
+  static const ColorWriteMask blue = ColorWriteMask(0x1 << 1);
+  static const ColorWriteMask alpha = ColorWriteMask(0x1 << 0);
+
+  static const ColorWriteMask all = ColorWriteMask(0xf);
+  static const ColorWriteMask unspecialized = ColorWriteMask(0xFFFFFFFF);
+
+  // Bitwise OR operator to combine masks
+  ColorWriteMask operator |(ColorWriteMask other) {
+    return ColorWriteMask(rawValue | other.rawValue);
+  }
+
+  // Bitwise AND operator to check for a mask
+  ColorWriteMask operator &(ColorWriteMask other) {
+    return ColorWriteMask(rawValue & other.rawValue);
+  }
+
+  bool has(ColorWriteMask mask) => (rawValue & mask.rawValue) != 0;
+}
+
+enum BlendFactor {
+  zero(0),
+  one(1),
+  sourceColor(2),
+  oneMinusSourceColor(3),
+  sourceAlpha(4),
+  oneMinusSourceAlpha(5),
+  destinationColor(6),
+  oneMinusDestinationColor(7),
+  destinationAlpha(8),
+  oneMinusDestinationAlpha(9),
+  sourceAlphaSaturated(10),
+  blendColor(11),
+  oneMinusBlendColor(12),
+  blendAlpha(13),
+  oneMinusBlendAlpha(14),
+  source1Color(15),
+  oneMinusSource1Color(16),
+  source1Alpha(17),
+  oneMinusSource1Alpha(18);
+
+  final int value;
+  const BlendFactor(this.value);
+}
+
+enum PrimitiveTopology {
+  unspecified(0),
+  point(1),
+  line(2),
+  triangle(3);
+
+  final int value;
+  const PrimitiveTopology(this.value);
 }

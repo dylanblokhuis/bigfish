@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:app/world.dart';
 
 import 'native.dart';
@@ -10,7 +12,25 @@ void main() {
   window.onUpdate(() => update(world));
   window.onPresent((interpolation) => present(world, gpu, interpolation));
 
-  // we poll here because if we use a long lived function, we cant hot reload anything
+  final metalShader = File("./app/shaders/Shaders.metal").readAsStringSync();
+
+  final descriptor = RenderPipelineDescriptor(
+    colorAttachments: [
+      RenderPipelineDescriptorColorAttachment(
+        pixelFormat: PixelFormat.bgra8Unorm,
+      ),
+    ],
+    vertexShader: ShaderLibrary(
+      source: metalShader,
+      entryPoint: 'vertexShader',
+    ),
+    fragmentShader: ShaderLibrary(
+      source: metalShader,
+      entryPoint: 'fragmentShader',
+    ),
+  );
+  final renderPipeline = gpu.compileRenderPipeline(descriptor);
+
   while (window.poll()) {}
 }
 
