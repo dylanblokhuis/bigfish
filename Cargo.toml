@@ -11,6 +11,7 @@ anyhow = "1.0.100"
 clap = { version = "4.5.54", features = ["derive"] }
 inventory = "0.3.21"
 thiserror = "2.0.16"
+serde = { version = "1.0", features = ["derive"] }
 bigfish_macros = { path = "bigfish_macros" }
 sdl3 = "0.17.2"
 chron = "0.1.6"

@@ -1,11 +1,13 @@
 use bigfish_macros::native_impl;
 use objc2::{rc::Retained, runtime::ProtocolObject};
+use objc2_foundation::NSUInteger;
 use objc2_metal::{
-    MTL4ArgumentTable, MTL4ArgumentTableDescriptor, MTL4CommandAllocator, MTL4CommandBuffer,
-    MTL4CommandQueue, MTL4CompilerDescriptor, MTL4RenderPassDescriptor,
-    MTL4RenderPipelineDescriptor, MTLCreateSystemDefaultDevice, MTLDevice, MTLEvent, MTLLoadAction,
-    MTLPixelFormat, MTLPrimitiveType, MTLRenderPipelineState, MTLRenderStages, MTLResidencySet,
-    MTLResidencySetDescriptor, MTLSharedEvent, MTLStoreAction, MTLViewport,
+    MTL4ArgumentTable, MTL4ArgumentTableDescriptor, MTL4BlendState, MTL4CommandAllocator,
+    MTL4CommandBuffer, MTL4CommandQueue, MTL4Compiler, MTL4CompilerDescriptor,
+    MTL4RenderPassDescriptor, MTL4RenderPipelineDescriptor, MTLBlendFactor, MTLColorWriteMask,
+    MTLCreateSystemDefaultDevice, MTLDevice, MTLEvent, MTLLoadAction, MTLPixelFormat,
+    MTLPrimitiveTopologyClass, MTLPrimitiveType, MTLRenderPipelineState, MTLRenderStages,
+    MTLResidencySet, MTLResidencySetDescriptor, MTLSharedEvent, MTLStoreAction, MTLViewport,
 };
 // Bring ObjC protocol traits into scope for method resolution.
 use objc2_metal::{
@@ -13,8 +15,9 @@ use objc2_metal::{
     MTLDrawable as _,
 };
 use objc2_quartz_core::CAMetalDrawable;
+use serde::{Deserialize, Serialize};
 
-use crate::dart_api::{Isolate, NativeArguments};
+use crate::dart_api::{from_dart, Isolate, NativeArguments};
 use crate::window::Window;
 
 #[repr(C)]
@@ -43,6 +46,7 @@ struct Gpu {
     command_queue: Id<dyn MTL4CommandQueue>,
     command_buffer: Id<dyn MTL4CommandBuffer>,
     command_allocators: Vec<Id<dyn MTL4CommandAllocator>>,
+    compiler: Id<dyn MTL4Compiler>,
     residency_set: Id<dyn MTLResidencySet>,
     argument_table: Id<dyn MTL4ArgumentTable>,
     render_pipeline_state: Id<dyn MTLRenderPipelineState>,
@@ -195,6 +199,11 @@ fragment float4 fragmentShader(VSOut in [[stage_in]]) {
         let shared_event = device.newSharedEvent().unwrap();
         shared_event.setSignaledValue(0);
 
+        let compiler_desc = MTL4CompilerDescriptor::new();
+        let compiler = device
+            .newCompilerWithDescriptor_error(&compiler_desc)
+            .unwrap();
+
         instance.set_peer(Box::new(Gpu {
             device,
             command_queue,
@@ -202,6 +211,7 @@ fragment float4 fragmentShader(VSOut in [[stage_in]]) {
             command_allocators,
             residency_set,
             argument_table,
+            compiler,
             render_pipeline_state,
             triangle_vertex_buffers,
             viewport_size_buffer,
@@ -284,8 +294,80 @@ fragment float4 fragmentShader(VSOut in [[stage_in]]) {
         let gpu = gpu_instance.get_peer::<Gpu>().unwrap();
         let descriptor_instance = args.get_arg(1).unwrap();
         let scope = Isolate::current().unwrap();
-        // descriptor_instance.x
-        //
+        let descriptor = descriptor_instance
+            .invoke(scope.new_string("toMap").unwrap(), &mut [])
+            .unwrap();
+        let descriptor = from_dart::<RenderPipelineDescriptor>(descriptor).unwrap();
+        let rp_desc = MTL4RenderPipelineDescriptor::new();
+        for i in 0..descriptor.color_attachments.len() {
+            let color_attachment = &descriptor.color_attachments[i];
+            let ca = unsafe { rp_desc.colorAttachments().objectAtIndexedSubscript(i) };
+            ca.setPixelFormat(MTLPixelFormat(color_attachment.pixel_format.0));
+            ca.setWriteMask(MTLColorWriteMask(color_attachment.write_mask.0));
+            ca.setBlendingState(if color_attachment.blend_enabled {
+                MTL4BlendState::Enabled
+            } else {
+                MTL4BlendState::Disabled
+            });
+            ca.setSourceRGBBlendFactor(MTLBlendFactor(color_attachment.source_rgb_blend_factor.0));
+            ca.setDestinationRGBBlendFactor(MTLBlendFactor(
+                color_attachment.destination_rgb_blend_factor.0,
+            ));
+            ca.setSourceAlphaBlendFactor(MTLBlendFactor(
+                color_attachment.source_alpha_blend_factor.0,
+            ));
+            ca.setDestinationAlphaBlendFactor(MTLBlendFactor(
+                color_attachment.destination_alpha_blend_factor.0,
+            ));
+        }
+
+        rp_desc
+            .setInputPrimitiveTopology(MTLPrimitiveTopologyClass(descriptor.primitive_topology.0));
+
+        let vertex_library = gpu
+            .device
+            .newLibraryWithSource_options_error(
+                &objc2_foundation::NSString::from_str(&descriptor.vertex_shader.source),
+                None,
+            )
+            .unwrap();
+        let fragment_library = gpu
+            .device
+            .newLibraryWithSource_options_error(
+                &objc2_foundation::NSString::from_str(&descriptor.fragment_shader.source),
+                None,
+            )
+            .unwrap();
+
+        let vfd = objc2_metal::MTL4LibraryFunctionDescriptor::new();
+        vfd.setLibrary(Some(&vertex_library));
+        vfd.setName(Some(&objc2_foundation::NSString::from_str(
+            &descriptor.vertex_shader.entry_point,
+        )));
+        rp_desc.setVertexFunctionDescriptor(Some(&*vfd));
+
+        let ffd = objc2_metal::MTL4LibraryFunctionDescriptor::new();
+        ffd.setLibrary(Some(&fragment_library));
+        ffd.setName(Some(&objc2_foundation::NSString::from_str(
+            &descriptor.fragment_shader.entry_point,
+        )));
+        rp_desc.setFragmentFunctionDescriptor(Some(&*ffd));
+
+        let render_pipeline_state = gpu
+            .compiler
+            .newRenderPipelineStateWithDescriptor_compilerTaskOptions_error(&rp_desc, None)
+            .unwrap();
+
+        let library = scope.library("package:app/native.dart").unwrap();
+        let class_type = scope.get_class(library, "RenderPipeline").unwrap();
+        let class_instance = scope
+            .new_object(class_type, scope.null_handle().unwrap(), &mut [])
+            .unwrap();
+        class_instance.set_peer(Box::new(RenderPipeline {
+            render_pipeline_state,
+        }));
+        class_instance.set_field(scope.new_string("gpu").unwrap(), &gpu_instance);
+        args.set_return_value(class_instance);
     }
 
     // fn gpu_draw(args: NativeArguments) {
@@ -406,6 +488,10 @@ fragment float4 fragmentShader(VSOut in [[stage_in]]) {
     // }
 }
 
+struct RenderPipeline {
+    render_pipeline_state: Id<dyn MTLRenderPipelineState>,
+}
+
 fn calculate_triangle(rotation_degrees: f32) -> TriangleData {
     let radius = 0.5_f32;
     let angle = rotation_degrees * core::f32::consts::PI / 180.0;
@@ -437,3 +523,51 @@ fn calculate_triangle(rotation_degrees: f32) -> TriangleData {
         vertices: [v0, v1, v2],
     }
 }
+
+#[derive(Deserialize, Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct RenderPipelineDescriptor {
+    label: String,
+    color_attachments: Vec<RenderPipelineDescriptorColorAttachment>,
+    depth_attachment_pixel_format: PixelFormat,
+    stencil_attachment_pixel_format: PixelFormat,
+    primitive_topology: PrimitiveTopology,
+    vertex_shader: ShaderLibrary,
+    fragment_shader: ShaderLibrary,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+struct PrimitiveTopology(usize);
+
+#[derive(Deserialize, Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct ShaderLibrary {
+    source: String,
+    entry_point: String,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct RenderPipelineDescriptorColorAttachment {
+    pixel_format: PixelFormat,
+    write_mask: ColorWriteMask,
+    blend_enabled: bool,
+    rgb_blend_op: BlendOp,
+    alpha_blend_op: BlendOp,
+    source_alpha_blend_factor: BlendFactor,
+    destination_alpha_blend_factor: BlendFactor,
+    source_rgb_blend_factor: BlendFactor,
+    destination_rgb_blend_factor: BlendFactor,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+struct ColorWriteMask(usize);
+
+#[derive(Deserialize, Serialize, Debug)]
+struct BlendOp(usize);
+
+#[derive(Deserialize, Serialize, Debug)]
+struct BlendFactor(usize);
+
+#[derive(Deserialize, Serialize, Debug)]
+struct PixelFormat(usize);

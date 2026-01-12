@@ -54,6 +54,11 @@ fn check(handle: sys::Dart_Handle) -> Result<sys::Dart_Handle> {
     Ok(handle)
 }
 
+/// Like [`Scope::check`], but usable in modules that only have raw `Dart_Handle`s.
+pub(crate) fn check_raw(handle: sys::Dart_Handle) -> Result<sys::Dart_Handle> {
+    check(handle)
+}
+
 /// A running Dart VM instance (initialized via `DartDll_Initialize`).
 ///
 /// Dropping this will call `DartDll_Shutdown()`.
@@ -313,6 +318,13 @@ impl<'s> Clone for Handle<'s> {
 }
 
 impl<'s> Handle<'s> {
+    pub(crate) fn from_raw(raw: sys::Dart_Handle) -> Self {
+        Self {
+            raw,
+            _marker: PhantomData,
+        }
+    }
+
     pub fn raw(self) -> sys::Dart_Handle {
         self.raw
     }
@@ -335,6 +347,19 @@ impl<'s> Handle<'s> {
 
     pub fn is_list(self) -> bool {
         unsafe { sys::Dart_IsList(self.raw) }
+    }
+
+    pub fn is_map(self) -> bool {
+        unsafe { sys::Dart_IsMap(self.raw) }
+    }
+
+    pub fn map_keys(self, scope: &Scope<'s>) -> Result<List<'s>> {
+        let keys = scope.check(unsafe { sys::Dart_MapKeys(self.raw) })?;
+        List::new(keys)
+    }
+
+    pub fn map_get(self, scope: &Scope<'s>, key: Handle<'s>) -> Result<Handle<'s>> {
+        scope.check(unsafe { sys::Dart_MapGetAt(self.raw, key.raw) })
     }
 
     pub fn is_typed_data(self) -> bool {
@@ -484,6 +509,16 @@ impl<'s> Handle<'s> {
         }
         Ok(Handle {
             raw: value,
+            _marker: PhantomData,
+        })
+    }
+
+    pub fn invoke(self, name: Handle<'s>, args: &mut [sys::Dart_Handle]) -> Result<Handle<'s>> {
+        let handle =
+            unsafe { sys::Dart_Invoke(self.raw, name.raw, args.len() as i32, args.as_mut_ptr()) };
+        check(handle)?;
+        Ok(Handle {
+            raw: handle,
             _marker: PhantomData,
         })
     }
@@ -766,6 +801,360 @@ impl NativeFunction {
         function: unsafe extern "C" fn(args: sys::Dart_NativeArguments),
     ) -> Self {
         Self { name, function }
+    }
+}
+
+use serde::de::{self, DeserializeOwned, MapAccess, SeqAccess, Visitor};
+
+pub fn from_dart<T: DeserializeOwned>(handle: Handle) -> Result<T> {
+    let scope = Isolate::current()?;
+    let mut deserializer = Deserializer {
+        handle,
+        scope: &scope,
+    };
+    T::deserialize(&mut deserializer)
+}
+
+impl de::Error for DartError {
+    fn custom<T: std::fmt::Display>(msg: T) -> Self {
+        DartError::Api(msg.to_string())
+    }
+}
+
+struct Deserializer<'a, 's> {
+    handle: Handle<'s>,
+    scope: &'a Scope<'s>,
+}
+
+impl<'a, 's, 'de> de::Deserializer<'de> for &'a mut Deserializer<'a, 's> {
+    type Error = DartError;
+
+    fn deserialize_any<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        if self.handle.is_null() {
+            visitor.visit_unit()
+        } else if self.handle.is_boolean() {
+            visitor.visit_bool(self.handle.to_bool()?)
+        } else if self.handle.is_integer() {
+            visitor.visit_i64(self.handle.to_i64()?)
+        } else if self.handle.is_double() {
+            visitor.visit_f64(self.handle.to_f64()?)
+        } else if self.handle.is_string() {
+            visitor.visit_string(self.handle.to_string_lossy()?)
+        } else if self.handle.is_list() {
+            self.deserialize_seq(visitor)
+        } else if self.handle.is_map() {
+            self.deserialize_map(visitor)
+        } else {
+            Err(DartError::Api("Unsupported Dart type".into()))
+        }
+    }
+
+    fn deserialize_bool<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        visitor.visit_bool(self.handle.to_bool()?)
+    }
+
+    fn deserialize_i8<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        visitor.visit_i8(self.handle.to_i64()? as i8)
+    }
+
+    fn deserialize_i16<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        visitor.visit_i16(self.handle.to_i64()? as i16)
+    }
+
+    fn deserialize_i32<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        visitor.visit_i32(self.handle.to_i64()? as i32)
+    }
+
+    fn deserialize_i64<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        visitor.visit_i64(self.handle.to_i64()?)
+    }
+
+    fn deserialize_u8<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        visitor.visit_u8(self.handle.to_u64()? as u8)
+    }
+
+    fn deserialize_u16<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        visitor.visit_u16(self.handle.to_u64()? as u16)
+    }
+
+    fn deserialize_u32<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        visitor.visit_u32(self.handle.to_u64()? as u32)
+    }
+
+    fn deserialize_u64<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        visitor.visit_u64(self.handle.to_u64()?)
+    }
+
+    fn deserialize_f32<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        visitor.visit_f32(self.handle.to_f64()? as f32)
+    }
+
+    fn deserialize_f64<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        visitor.visit_f64(self.handle.to_f64()?)
+    }
+
+    fn deserialize_char<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        let s = self.handle.to_string_lossy()?;
+        let c = s
+            .chars()
+            .next()
+            .ok_or_else(|| DartError::Api("empty string for char".into()))?;
+        visitor.visit_char(c)
+    }
+
+    fn deserialize_str<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        visitor.visit_string(self.handle.to_string_lossy()?)
+    }
+
+    fn deserialize_string<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        visitor.visit_string(self.handle.to_string_lossy()?)
+    }
+
+    fn deserialize_bytes<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        Err(DartError::Api("bytes not supported".into()))
+    }
+
+    fn deserialize_byte_buf<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        Err(DartError::Api("byte_buf not supported".into()))
+    }
+
+    fn deserialize_option<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        if self.handle.is_null() {
+            visitor.visit_none()
+        } else {
+            visitor.visit_some(self)
+        }
+    }
+
+    fn deserialize_unit<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        visitor.visit_unit()
+    }
+
+    fn deserialize_unit_struct<V>(self, _name: &'static str, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        visitor.visit_unit()
+    }
+
+    fn deserialize_newtype_struct<V>(self, _name: &'static str, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        visitor.visit_newtype_struct(self)
+    }
+
+    fn deserialize_seq<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        let list = List::new(self.handle)?;
+        let len = list.len()? as usize;
+        visitor.visit_seq(SeqAccessImpl {
+            list,
+            scope: self.scope,
+            index: 0,
+            len,
+        })
+    }
+
+    fn deserialize_tuple<V>(self, _len: usize, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        self.deserialize_seq(visitor)
+    }
+
+    fn deserialize_tuple_struct<V>(
+        self,
+        _name: &'static str,
+        _len: usize,
+        visitor: V,
+    ) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        self.deserialize_seq(visitor)
+    }
+
+    fn deserialize_map<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        let keys = self.handle.map_keys(self.scope)?;
+        let len = keys.len()? as usize;
+        visitor.visit_map(MapAccessImpl {
+            map: self.handle,
+            keys,
+            scope: self.scope,
+            index: 0,
+            len,
+        })
+    }
+
+    fn deserialize_struct<V>(
+        self,
+        _name: &'static str,
+        _fields: &'static [&'static str],
+        visitor: V,
+    ) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        self.deserialize_map(visitor)
+    }
+
+    fn deserialize_enum<V>(
+        self,
+        _name: &'static str,
+        _variants: &'static [&'static str],
+        _visitor: V,
+    ) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        Err(DartError::Api("enum not supported".into()))
+    }
+
+    fn deserialize_identifier<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        self.deserialize_str(visitor)
+    }
+
+    fn deserialize_ignored_any<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        visitor.visit_unit()
+    }
+}
+
+struct SeqAccessImpl<'a, 's> {
+    list: List<'s>,
+    scope: &'a Scope<'s>,
+    index: usize,
+    len: usize,
+}
+
+impl<'a, 's, 'de> SeqAccess<'de> for SeqAccessImpl<'a, 's> {
+    type Error = DartError;
+
+    fn next_element_seed<T>(&mut self, seed: T) -> Result<Option<T::Value>>
+    where
+        T: de::DeserializeSeed<'de>,
+    {
+        if self.index >= self.len {
+            return Ok(None);
+        }
+        let handle = self.list.get(self.scope, self.index as isize)?;
+        let mut deserializer = Deserializer {
+            handle,
+            scope: self.scope,
+        };
+        let value = seed.deserialize(&mut deserializer)?;
+        self.index += 1;
+        Ok(Some(value))
+    }
+}
+
+struct MapAccessImpl<'a, 's> {
+    map: Handle<'s>,
+    keys: List<'s>,
+    scope: &'a Scope<'s>,
+    index: usize,
+    len: usize,
+}
+
+impl<'a, 's, 'de> MapAccess<'de> for MapAccessImpl<'a, 's> {
+    type Error = DartError;
+
+    fn next_key_seed<K>(&mut self, seed: K) -> Result<Option<K::Value>>
+    where
+        K: de::DeserializeSeed<'de>,
+    {
+        if self.index >= self.len {
+            return Ok(None);
+        }
+        let key_handle = self.keys.get(self.scope, self.index as isize)?;
+        let mut deserializer = Deserializer {
+            handle: key_handle,
+            scope: self.scope,
+        };
+        seed.deserialize(&mut deserializer).map(Some)
+    }
+
+    fn next_value_seed<V>(&mut self, seed: V) -> Result<V::Value>
+    where
+        V: de::DeserializeSeed<'de>,
+    {
+        let key_handle = self.keys.get(self.scope, self.index as isize)?;
+        let value_handle = self.map.map_get(self.scope, key_handle)?;
+        let mut deserializer = Deserializer {
+            handle: value_handle,
+            scope: self.scope,
+        };
+        let value = seed.deserialize(&mut deserializer)?;
+        self.index += 1;
+        Ok(value)
     }
 }
 

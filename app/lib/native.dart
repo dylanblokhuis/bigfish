@@ -1,3 +1,4 @@
+import 'dart:ffi';
 import 'dart:nativewrappers';
 
 base class Window extends NativeFieldWrapperClass1 {
@@ -33,7 +34,9 @@ base class Gpu extends NativeFieldWrapperClass1 {
   external void endCommandBuffer(CommandBuffer commandBuffer);
 
   @pragma('vm:external-name', 'Gpu_compile_render_pipeline')
-  external void compileRenderPipeline(RenderPipelineDescriptor descriptor);
+  external RenderPipeline compileRenderPipeline(
+    RenderPipelineDescriptor descriptor,
+  );
 }
 
 @pragma("vm:entry-point")
@@ -44,6 +47,8 @@ base class CommandBuffer extends NativeFieldWrapperClass1 {
   @pragma("vm:entry-point")
   external Gpu gpu;
 }
+
+base class RenderPipeline extends NativeFieldWrapperClass1 {}
 
 class RenderPipelineDescriptor {
   String label = "Unnamed Render Pipeline Descriptor";
@@ -59,12 +64,29 @@ class RenderPipelineDescriptor {
     required this.vertexShader,
     required this.fragmentShader,
   });
+
+  @pragma("vm:entry-point")
+  Map<String, dynamic> toMap() {
+    return {
+      'label': label,
+      'colorAttachments': colorAttachments.map((e) => e.toMap()).toList(),
+      'depthAttachmentPixelFormat': depthAttachmentPixelFormat.value,
+      'stencilAttachmentPixelFormat': stencilAttachmentPixelFormat.value,
+      'primitiveTopology': primitiveTopology.value,
+      'vertexShader': vertexShader.toMap(),
+      'fragmentShader': fragmentShader.toMap(),
+    };
+  }
 }
 
 class ShaderLibrary {
   String source;
   String entryPoint;
   ShaderLibrary({required this.source, required this.entryPoint});
+
+  Map<String, dynamic> toMap() {
+    return {'source': source, 'entryPoint': entryPoint};
+  }
 }
 
 class RenderPipelineDescriptorColorAttachment {
@@ -78,6 +100,20 @@ class RenderPipelineDescriptorColorAttachment {
   BlendFactor sourceRgbBlendFactor = BlendFactor.one;
   BlendFactor destinationRgbBlendFactor = BlendFactor.zero;
   RenderPipelineDescriptorColorAttachment({required this.pixelFormat});
+
+  Map<String, dynamic> toMap() {
+    return {
+      'pixelFormat': pixelFormat.value,
+      'writeMask': writeMask.rawValue,
+      'blendEnabled': blendEnabled,
+      'rgbBlendOp': rgbBlendOp.index,
+      'alphaBlendOp': alphaBlendOp.index,
+      'sourceAlphaBlendFactor': sourceAlphaBlendFactor.index,
+      'destinationAlphaBlendFactor': destinationAlphaBlendFactor.index,
+      'sourceRgbBlendFactor': sourceRgbBlendFactor.index,
+      'destinationRgbBlendFactor': destinationRgbBlendFactor.index,
+    };
+  }
 }
 
 enum BlendOp { add, subtract, reverseSubtract, min, max }
