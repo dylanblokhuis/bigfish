@@ -17,7 +17,9 @@ use std::{
     ptr,
 };
 
-use crate::dart_api::sys::{Dart_ExitScope, Dart_LookupLibrary};
+use sdl3::sys::assert;
+
+use crate::dart_api::sys::Dart_LookupLibrary;
 
 pub type Result<T> = std::result::Result<T, DartError>;
 
@@ -64,6 +66,11 @@ pub struct RuntimeConfig {
     pub start_service_isolate: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct IsolateData {
+    library: sys::Dart_Handle,
+}
+
 impl RuntimeConfig {
     pub fn new(service_port: u16, start_service_isolate: bool) -> Self {
         Self {
@@ -85,45 +92,31 @@ impl Runtime {
         Ok(Self { _priv: () })
     }
 
-    pub fn load_script(
-        &self,
-        script_uri: &CStr,
-        package_config: &CStr,
-        isolate_data: *mut c_void,
-    ) -> Result<Isolate> {
+    pub fn load_script(&self, script_uri: &CStr, package_config: &CStr) -> Result<Isolate> {
+        let isolate_data_ptr = Box::into_raw(Box::new(IsolateData {
+            library: std::ptr::null_mut(),
+        }));
         let isolate = unsafe {
-            sys::DartDll_LoadScript(script_uri.as_ptr(), package_config.as_ptr(), isolate_data)
+            sys::DartDll_LoadScript(
+                script_uri.as_ptr(),
+                package_config.as_ptr(),
+                isolate_data_ptr as *mut c_void,
+            )
         };
         if isolate.is_null() {
             return Err(DartError::Api(
                 "DartDll_LoadScript returned null isolate".into(),
             ));
         }
-        let mut isolate = Isolate { raw: isolate };
-        {
-            let scope = isolate.enter();
-            let library = scope.library();
-            unsafe { sys::Dart_SetNativeResolver(library.raw(), Some(native_resolver), None) };
+        // {
+        //     let scope = isolate.enter();
+        //     let isolate_data = unsafe { &mut *isolate_data_ptr };
+        //     isolate_data.library = get_library(&scope).unwrap().raw;
+        //     let library = scope.library().unwrap();
+        //     unsafe { sys::Dart_SetNativeResolver(library.raw(), Some(native_resolver), None) };
+        // }
 
-            // get loaded libraries and set native resolver
-            // let loaded_libraries = unsafe { sys::Dart_GetLoadedLibraries() };
-
-            // let mut len_ptr = MaybeUninit::<isize>::uninit();
-            // unsafe { sys::Dart_ListLength(loaded_libraries, len_ptr.as_mut_ptr()) };
-            // let len = unsafe { len_ptr.assume_init() };
-            // for i in 0..len {
-            //     let library = unsafe { sys::Dart_ListGetAt(loaded_libraries, i) };
-            //     unsafe { sys::Dart_SetNativeResolver(library, Some(native_resolver), None) };
-            // }
-
-            let library = unsafe {
-                let url = scope.new_string("package:app/native.dart").unwrap();
-                Dart_LookupLibrary(url.raw)
-            };
-            unsafe { sys::Dart_SetNativeResolver(library, Some(native_resolver), None) };
-        }
-
-        Ok(isolate)
+        Ok(Isolate { raw: isolate })
     }
 
     pub fn drain_microtask_queue<'i>(&self, scope: &Scope<'i>) -> Result<Handle<'i>> {
@@ -139,6 +132,22 @@ impl Drop for Runtime {
     }
 }
 
+fn get_library<'a>(scope: &Scope<'a>) -> Result<Handle<'a>> {
+    let library = unsafe {
+        let url = scope.new_string("package:app/native.dart").unwrap();
+        Dart_LookupLibrary(url.raw)
+    };
+    if library.is_null() {
+        return Err(DartError::Api(
+            "Dart_LookupLibrary returned null library".into(),
+        ));
+    }
+    Ok(Handle {
+        raw: library,
+        _marker: PhantomData,
+    })
+}
+
 /// A Dart isolate created/loaded through the embedding API.
 pub struct Isolate {
     raw: sys::Dart_Isolate,
@@ -152,7 +161,6 @@ impl Isolate {
             return Err(DartError::Api("Dart_CurrentIsolate returned null".into()));
         }
         Ok(ManuallyDrop::new(Scope {
-            library: unsafe { sys::Dart_RootLibrary() },
             _marker: PhantomData,
         }))
     }
@@ -161,9 +169,7 @@ impl Isolate {
         unsafe {
             sys::Dart_EnterIsolate(self.raw);
             sys::Dart_EnterScope();
-            let lib = sys::Dart_RootLibrary();
             Scope {
-                library: lib,
                 _marker: PhantomData,
             }
         }
@@ -193,16 +199,30 @@ impl Drop for Isolate {
 ///
 /// All [`Handle`] values produced from this scope are only valid until this is dropped.
 pub struct Scope<'i> {
-    library: sys::Dart_Handle,
     _marker: PhantomData<&'i mut ()>,
 }
 
 impl<'i> Scope<'i> {
-    pub fn library(&self) -> Handle<'i> {
-        Handle {
-            raw: self.library,
-            _marker: PhantomData,
+    pub fn library(&self, name: &str) -> Result<Handle<'i>> {
+        let url = self.new_string(name)?;
+        let lib = unsafe { sys::Dart_LookupLibrary(url.raw) };
+        if lib.is_null() {
+            return Err(DartError::Api(
+                "Dart_LookupLibrary returned null library".into(),
+            ));
         }
+        Ok(Handle {
+            raw: lib,
+            _marker: PhantomData,
+        })
+    }
+
+    pub fn set_native_resolver(
+        &self,
+        library: Handle<'i>,
+        resolver: sys::Dart_NativeEntryResolver,
+    ) {
+        unsafe { sys::Dart_SetNativeResolver(library.raw, resolver, None) };
     }
 
     pub fn check(&self, handle: sys::Dart_Handle) -> Result<Handle<'i>> {
@@ -219,16 +239,21 @@ impl<'i> Scope<'i> {
         self.check(unsafe { sys::Dart_NewStringFromCString(s.as_ptr()) })
     }
 
-    pub fn invoke(&mut self, name: &str, args: &mut [sys::Dart_Handle]) -> Result<Handle<'i>> {
+    pub fn invoke(
+        &mut self,
+        library: Handle<'i>,
+        name: &str,
+        args: &mut [sys::Dart_Handle],
+    ) -> Result<Handle<'i>> {
         let name = self.new_string(name)?;
         self.check(unsafe {
-            sys::Dart_Invoke(self.library, name.raw, args.len() as i32, args.as_mut_ptr())
+            sys::Dart_Invoke(library.raw, name.raw, args.len() as i32, args.as_mut_ptr())
         })
     }
 
-    pub fn get_class(&self, class_name: &str) -> Result<Handle<'i>> {
+    pub fn get_class(&self, library: Handle<'i>, class_name: &str) -> Result<Handle<'i>> {
         let class_name = self.new_string(class_name)?;
-        self.check(unsafe { sys::Dart_GetClass(self.library, class_name.raw) })
+        self.check(unsafe { sys::Dart_GetClass(library.raw, class_name.raw) })
     }
 
     pub fn new_double(&self, value: f64) -> Result<Handle<'i>> {
@@ -241,6 +266,26 @@ impl<'i> Scope<'i> {
 
     pub fn new_boolean(&self, value: bool) -> Result<Handle<'i>> {
         self.check(unsafe { sys::Dart_NewBoolean(value) })
+    }
+
+    pub fn null_handle(&self) -> Result<Handle<'i>> {
+        self.check(unsafe { sys::Dart_Null() })
+    }
+
+    pub fn new_object(
+        &self,
+        type_: Handle<'i>,
+        constructor_name: Handle<'i>,
+        arguments: &mut [sys::Dart_Handle],
+    ) -> Result<Handle<'i>> {
+        self.check(unsafe {
+            sys::Dart_New(
+                type_.raw,
+                constructor_name.raw,
+                arguments.len() as i32,
+                arguments.as_mut_ptr(),
+            )
+        })
     }
 }
 
@@ -426,6 +471,21 @@ impl<'s> Handle<'s> {
         let mut peer = MaybeUninit::<*mut T>::uninit();
         check(unsafe { sys::Dart_GetPeer(self.raw, peer.as_mut_ptr() as *mut *mut c_void) })?;
         Ok(unsafe { &mut *peer.assume_init() })
+    }
+
+    pub fn set_field(self, name: Handle<'s>, value: &Handle<'s>) {
+        unsafe { sys::Dart_SetField(self.raw, name.raw, value.raw) };
+    }
+
+    pub fn get_field(self, name: Handle<'s>) -> Result<Handle<'s>> {
+        let value = unsafe { sys::Dart_GetField(self.raw, name.raw) };
+        if value.is_null() {
+            return Err(DartError::NullHandle);
+        }
+        Ok(Handle {
+            raw: value,
+            _marker: PhantomData,
+        })
     }
 }
 

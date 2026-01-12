@@ -8,6 +8,8 @@ mod gpu;
 mod window;
 use dart_api::{Runtime, RuntimeConfig};
 
+use crate::dart_api::native_resolver;
+
 #[derive(clap::Parser)]
 struct Args {
     #[clap(long, default_value = if cfg!(debug_assertions) { "true" } else { "false" })]
@@ -44,7 +46,6 @@ fn main() {
         .load_script(
             c"./app/lib/main.dart",
             c"./app/.dart_tool/package_config.json",
-            std::ptr::null_mut(),
         )
         .unwrap();
 
@@ -62,7 +63,14 @@ fn main() {
         *hot_reload_proc.lock().expect("poisoned watcher lock") = Some(child);
     }
 
-    isolate.enter().invoke("main", &mut []).unwrap();
+    {
+        let mut scope = isolate.enter();
+        let library = scope.library("package:app/native.dart").unwrap();
+        scope.set_native_resolver(library, Some(native_resolver));
+
+        let root_library = scope.library("package:app/main.dart").unwrap();
+        scope.invoke(root_library, "main", &mut []).unwrap();
+    }
 
     println!("Exiting...");
 

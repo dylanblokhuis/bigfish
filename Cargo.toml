@@ -16,5 +16,15 @@ sdl3 = "0.17.2"
 chron = "0.1.6"
 ctrlc = "3.4.0"
 
+objc2 = "0.6.2"
+dispatch2 = "0.3.0"
+block2 = "0.6.1"
+objc2-metal = "0.3.2"
+objc2-metal-kit = "0.3.2"
+objc2-foundation = "0.3.2"
+objc2-core-foundation = "0.3.2"
+objc2-quartz-core = "0.3.2"
+objc2-app-kit = "0.3.2"
+
 [build-dependencies]
 bindgen = "0.72.1"

@@ -1,10 +1,15 @@
 use bigfish_macros::native_func;
 
-use crate::dart_api::{Isolate, NativeArguments, NativeFunction, PersistentHandle};
+use crate::dart_api::{Isolate, NativeArguments, PersistentHandle};
 
 pub struct Window {
     ctx: sdl3::Sdl,
+    #[allow(dead_code)]
     window: sdl3::video::Window,
+    #[cfg(target_os = "macos")]
+    metal_view: sdl3::sys::metal::SDL_MetalView,
+    #[cfg(target_os = "macos")]
+    metal_layer: objc2::rc::Retained<objc2_quartz_core::CAMetalLayer>,
     update_callback: Option<PersistentHandle>,
     present_callback: Option<PersistentHandle>,
     clock: chron::Clock,
@@ -37,9 +42,35 @@ fn create_window(args: NativeArguments) {
 
     let clock = chron::Clock::new(updates_per_second);
 
+    #[cfg(target_os = "macos")]
+    let (metal_view, metal_layer) = {
+        use objc2::rc::Retained;
+        use objc2_quartz_core::CAMetalLayer;
+
+        // Create a CAMetalLayer-backed view and attach it to the SDL window.
+        //
+        // On macOS, SDL does not automatically associate an MTLDevice with the CAMetalLayer;
+        // we do that later when initializing the GPU.
+        let metal_view = unsafe { sdl3::sys::metal::SDL_Metal_CreateView(window.raw()) };
+        if metal_view.is_null() {
+            panic!("SDL_Metal_CreateView returned null");
+        }
+
+        let layer_ptr =
+            unsafe { sdl3::sys::metal::SDL_Metal_GetLayer(metal_view) } as *mut CAMetalLayer;
+        let metal_layer =
+            unsafe { Retained::retain(layer_ptr) }.expect("SDL_Metal_GetLayer returned null");
+
+        (metal_view, metal_layer)
+    };
+
     let window_struct = Box::new(Window {
         ctx,
         window,
+        #[cfg(target_os = "macos")]
+        metal_view,
+        #[cfg(target_os = "macos")]
+        metal_layer,
         update_callback: None,
         present_callback: None,
         clock,
@@ -50,7 +81,29 @@ fn create_window(args: NativeArguments) {
     // instance.new_finalizable_handle(window_struct
 }
 
-inventory::submit!(NativeFunction::new("create_window", __shim_create_window));
+#[cfg(target_os = "macos")]
+impl Window {
+    pub fn metal_layer(&self) -> &objc2_quartz_core::CAMetalLayer {
+        &self.metal_layer
+    }
+
+    pub fn size(&self) -> (u32, u32) {
+        self.window.size()
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for Window {
+    fn drop(&mut self) {
+        // SDL requires destroying the Metal view before destroying the window.
+        unsafe {
+            if !self.metal_view.is_null() {
+                sdl3::sys::metal::SDL_Metal_DestroyView(self.metal_view);
+                self.metal_view = std::ptr::null_mut();
+            }
+        }
+    }
+}
 
 #[native_func]
 fn on_update(args: NativeArguments) {
