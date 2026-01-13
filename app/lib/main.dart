@@ -59,8 +59,11 @@ void present(World world, Gpu gpu, double interpolation) {
   final commandBuffer = gpu.beginCommandBuffer();
   final renderCommandEncoder = commandBuffer.renderCommandEncoder();
   renderCommandEncoder.setRenderPipeline(simpleRaster.renderPipeline);
-  renderCommandEncoder.setViewport(
-    Viewport(x: 0, y: 0, width: 800, height: 600),
+  renderCommandEncoder.setViewport(width: 800, height: 600);
+  renderCommandEncoder.drawPrimitives(
+    primitiveType: PrimitiveType.triangle,
+    vertexCount: 3,
+    instanceCount: 1,
   );
   renderCommandEncoder.endEncoding();
   gpu.endCommandBuffer(commandBuffer);

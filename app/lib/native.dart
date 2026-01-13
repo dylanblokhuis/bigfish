@@ -65,10 +65,55 @@ base class RenderCommandEncoder extends NativeFieldWrapperClass1 {
   external void setRenderPipeline(RenderPipeline renderPipeline);
 
   @pragma('vm:external-name', 'RenderCommandEncoder_set_viewport')
-  external void setViewport(Viewport viewport);
+  external void _setViewport(double x, double y, double width, double height);
+
+  void setViewport({
+    required double width,
+    required double height,
+    double x = 0,
+    double y = 0,
+  }) {
+    _setViewport(x, y, width, height);
+  }
+
+  @pragma('vm:external-name', 'RenderCommandEncoder_draw_primitives')
+  external void _drawPrimitives(
+    int primitiveType,
+    int vertexCount,
+    int instanceCount,
+    int baseVertex,
+    int baseInstance,
+  );
+
+  void drawPrimitives({
+    required PrimitiveType primitiveType,
+    required int vertexCount,
+    required int instanceCount,
+    int baseVertex = 0,
+    int baseInstance = 0,
+  }) {
+    _drawPrimitives(
+      primitiveType.value,
+      vertexCount,
+      instanceCount,
+      baseVertex,
+      baseInstance,
+    );
+  }
 
   @pragma('vm:external-name', 'RenderCommandEncoder_end_encoding')
   external void endEncoding();
+}
+
+enum PrimitiveType {
+  point(0),
+  line(1),
+  lineStrip(2),
+  triangle(3),
+  triangleStrip(4);
+
+  final int value;
+  const PrimitiveType(this.value);
 }
 
 class Viewport {

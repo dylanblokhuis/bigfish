@@ -126,26 +126,49 @@ impl RenderCommandEncoder {
             .setRenderPipelineState(&render_pipeline.render_pipeline_state);
     }
 
-    fn set_viewport(args: NativeArguments, scope: Scope<'_>) {
+    fn set_viewport(args: NativeArguments) {
         let render_command_encoder_instance = args.get_arg(0).unwrap();
         let render_command_encoder = render_command_encoder_instance
             .get_peer::<RenderCommandEncoder>()
             .unwrap();
 
-        let viewport = args.get_arg(1).unwrap();
-        let viewport = viewport
-            .invoke(scope.new_string("toMap").unwrap(), &mut [])
-            .unwrap();
-        let viewport = from_dart::<Viewport>(viewport).unwrap();
+        let x = args.get_double_arg(1).unwrap();
+        let y = args.get_double_arg(2).unwrap();
+        let width = args.get_double_arg(3).unwrap();
+        let height = args.get_double_arg(4).unwrap();
 
         render_command_encoder.0.setViewport(MTLViewport {
-            originX: viewport.x,
-            originY: viewport.y,
-            width: viewport.width,
-            height: viewport.height,
+            originX: x,
+            originY: y,
+            width: width,
+            height: height,
             znear: 0.0,
             zfar: 1.0,
         });
+    }
+
+    fn draw_primitives(args: NativeArguments) {
+        let render_command_encoder_instance = args.get_arg(0).unwrap();
+        let render_command_encoder = render_command_encoder_instance
+            .get_peer::<RenderCommandEncoder>()
+            .unwrap();
+        let primitive_type = args.get_integer_arg(1).unwrap();
+        let vertex_count = args.get_integer_arg(2).unwrap();
+        let instance_count = args.get_integer_arg(3).unwrap();
+        let base_vertex = args.get_integer_arg(4).unwrap();
+        let base_instance = args.get_integer_arg(5).unwrap();
+
+        unsafe {
+            render_command_encoder
+                .0
+                .drawPrimitives_vertexStart_vertexCount_instanceCount_baseInstance(
+                    MTLPrimitiveType(primitive_type as usize),
+                    vertex_count as usize,
+                    instance_count as usize,
+                    base_vertex as usize,
+                    base_instance as usize,
+                );
+        }
     }
 
     fn end_encoding(args: NativeArguments) {

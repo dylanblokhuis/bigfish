@@ -81,6 +81,27 @@ Future<void> main(List<String> args) async {
 
   Logger.success('Connected to Dart VM');
 
+  // Listen for connection loss and shutdown gracefully
+  client.onConnectionLost.listen((_) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+
+    Logger.error('Lost connection to Dart VM');
+
+    // Stop any in-flight/retrying operations ASAP.
+    client.cancel();
+
+    // Ensure we always exit, even if cleanup hangs.
+    Timer(const Duration(seconds: 1), () => exit(1));
+
+    unawaited(
+      cleanup().whenComplete(() {
+        if (!done.isCompleted) done.complete();
+        exit(1);
+      }),
+    );
+  });
+
   Logger.info('Watching: ${watchDir.absolute.path}');
 
   Future<void> triggerReload() async {

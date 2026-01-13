@@ -14,8 +14,12 @@ class HotReloadClient {
   final String uri;
   VmService? _service;
   bool _cancelled = false;
+  final StreamController<void> _connectionLostController = StreamController<void>.broadcast();
 
   HotReloadClient({this.uri = defaultUri});
+
+  /// Stream that emits when the connection to the VM service is lost
+  Stream<void> get onConnectionLost => _connectionLostController.stream;
 
   /// Cancel any ongoing connection attempts
   void cancel() {
@@ -39,6 +43,10 @@ class HotReloadClient {
 
         // Verify connection
         await _service!.getVersion();
+
+        // Start monitoring the connection for loss
+        _startConnectionMonitoring();
+
         return true;
       } catch (e) {
         if (_cancelled) {
@@ -89,9 +97,20 @@ class HotReloadClient {
     }
   }
 
+  /// Start monitoring the VM service connection for loss
+  void _startConnectionMonitoring() {
+    _service?.onDone.whenComplete(() {
+      Logger.debug('VM service connection lost');
+      if (!_connectionLostController.isClosed) {
+        _connectionLostController.add(null);
+      }
+    });
+  }
+
   /// Disconnect from the VM service
   Future<void> disconnect() async {
     await _service?.dispose();
     _service = null;
+    _connectionLostController.close();
   }
 }
