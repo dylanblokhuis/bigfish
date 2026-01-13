@@ -82,7 +82,13 @@ void present(World world, Gpu gpu, double interpolation) {
   final simpleRaster = world.getResource<SimpleRaster>();
   // print("Present! $interpolation");
   final commandBuffer = gpu.beginCommandBuffer();
-  final renderCommandEncoder = commandBuffer.renderCommandEncoder();
+  final renderCommandEncoder = commandBuffer.renderCommandEncoder(
+    RenderPassDescriptor(
+      colorAttachments: [
+        RenderPassDescriptorColorAttachment(texture: commandBuffer.drawable()),
+      ],
+    ),
+  );
   renderCommandEncoder.setRenderPipeline(simpleRaster.renderPipeline);
 
   // Animate the triangle like the old Rust example.

@@ -19,6 +19,64 @@ base class Window extends NativeFieldWrapperClass1 {
   external bool poll();
 }
 
+@pragma("vm:entry-point")
+base class Texture extends NativeFieldWrapperClass1 {
+  @pragma("vm:entry-point")
+  Texture();
+
+  @pragma('vm:external-name', 'Texture_width')
+  external int width();
+
+  @pragma('vm:external-name', 'Texture_height')
+  external int height();
+
+  @pragma('vm:external-name', 'Texture_pixel_format')
+  external int pixelFormat();
+
+  @pragma('vm:external-name', 'Gpu_replace_region')
+  external void _replaceRegion(
+    Texture texture,
+    int regionX,
+    int regionY,
+    int regionZ,
+    int regionWidth,
+    int regionHeight,
+    int regionDepth,
+    int mipmapLevel,
+    Uint8List bytes,
+    int bytesPerRow, [
+    int bytesPerImage = 0,
+  ]);
+
+  void replaceRegion({
+    required Texture texture,
+    required int regionX,
+    required int regionY,
+    required int regionZ,
+    required int regionWidth,
+    required int regionHeight,
+    required int regionDepth,
+    required int mipmapLevel,
+    required Uint8List bytes,
+    required int bytesPerRow,
+    int bytesPerImage = 0,
+  }) {
+    _replaceRegion(
+      texture,
+      regionX,
+      regionY,
+      regionZ,
+      regionWidth,
+      regionHeight,
+      regionDepth,
+      mipmapLevel,
+      bytes,
+      bytesPerRow,
+      bytesPerImage,
+    );
+  }
+}
+
 base class Gpu extends NativeFieldWrapperClass1 {
   Gpu(Window window) {
     _initGpu(window);
@@ -65,6 +123,9 @@ base class Gpu extends NativeFieldWrapperClass1 {
       maxSamplerStateBindCount,
     );
   }
+
+  @pragma('vm:external-name', 'Gpu_create_texture')
+  external Texture createTexture(int width, int height, int pixelFormat);
 }
 
 @pragma("vm:entry-point")
@@ -74,6 +135,9 @@ base class ArgumentTable extends NativeFieldWrapperClass1 {
 
   @pragma('vm:external-name', 'ArgumentTable_set_buffer')
   external void setBuffer(Buffer buffer, int index, [int offset = 0]);
+
+  @pragma('vm:external-name', 'ArgumentTable_set_texture')
+  external void setTexture(Texture texture, int index);
 }
 
 @pragma("vm:entry-point")
@@ -85,7 +149,16 @@ base class CommandBuffer extends NativeFieldWrapperClass1 {
   Gpu gpu;
 
   @pragma('vm:external-name', 'CommandBuffer_render_command_encoder')
-  external RenderCommandEncoder renderCommandEncoder();
+  external RenderCommandEncoder _renderCommandEncoder(
+    RenderPassDescriptor descriptor,
+  );
+
+  RenderCommandEncoder renderCommandEncoder(RenderPassDescriptor descriptor) {
+    return _renderCommandEncoder(descriptor);
+  }
+
+  @pragma('vm:external-name', 'CommandBuffer_drawable')
+  external Texture drawable();
 }
 
 @pragma("vm:entry-point")
@@ -544,4 +617,61 @@ enum PrimitiveTopology {
 
   final int value;
   const PrimitiveTopology(this.value);
+}
+
+enum LoadAction {
+  dontCare(0),
+  load(1),
+  clear(2);
+
+  final int value;
+  const LoadAction(this.value);
+}
+
+enum StoreAction {
+  dontCare(0),
+  store(1),
+  multisampleResolve(2),
+  storeAndMultisampleResolve(3),
+  unknown(4),
+  customSampleDepthStore(5);
+
+  final int value;
+  const StoreAction(this.value);
+}
+
+class RenderPassDescriptor {
+  List<RenderPassDescriptorColorAttachment> colorAttachments;
+
+  RenderPassDescriptor({required this.colorAttachments});
+
+  @pragma("vm:entry-point")
+  Map<String, dynamic> toMap() {
+    return {
+      'colorAttachments': colorAttachments.map((e) => e.toMap()).toList(),
+    };
+  }
+}
+
+class RenderPassDescriptorColorAttachment {
+  Texture? texture;
+  LoadAction loadAction = LoadAction.clear;
+  StoreAction storeAction = StoreAction.store;
+  List<double> clearColor = const [0.0, 0.0, 0.0, 1.0];
+
+  RenderPassDescriptorColorAttachment({
+    this.texture,
+    this.loadAction = LoadAction.clear,
+    this.storeAction = StoreAction.store,
+    this.clearColor = const [0.0, 0.0, 0.0, 1.0],
+  });
+
+  Map<String, dynamic> toMap() {
+    return {
+      'texture': texture,
+      'loadAction': loadAction.value,
+      'storeAction': storeAction.value,
+      'clearColor': clearColor,
+    };
+  }
 }

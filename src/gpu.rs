@@ -7,19 +7,18 @@ use objc2_metal::{
     MTLBlendFactor, MTLColorWriteMask, MTLCreateSystemDefaultDevice, MTLDevice, MTLEvent,
     MTLLoadAction, MTLPixelFormat, MTLPrimitiveTopologyClass, MTLPrimitiveType,
     MTLRenderPipelineState, MTLRenderStages, MTLResidencySet, MTLResidencySetDescriptor,
-    MTLSharedEvent, MTLStoreAction, MTLViewport,
+    MTLSharedEvent, MTLStoreAction, MTLTexture, MTLTextureDescriptor, MTLTextureType,
+    MTLTextureUsage, MTLViewport,
 };
 // Bring ObjC protocol traits into scope for method resolution.
 use objc2_metal::{
     MTL4ArgumentTable as _, MTL4CommandEncoder as _, MTL4Compiler as _,
-    MTL4RenderCommandEncoder as _, MTLBuffer as _, MTLDrawable as _,
+    MTL4RenderCommandEncoder as _, MTLBuffer as _, MTLDrawable as _, MTLTexture as _,
 };
 use objc2_quartz_core::CAMetalDrawable;
 use serde::{Deserialize, Serialize};
 
-use crate::dart_api::{
-    from_dart, Handle, Isolate, List, NativeArguments, Result, Scope, TypedDataView,
-};
+use crate::dart_api::{from_dart, Handle, List, NativeArguments, Result, Scope, TypedDataView};
 use crate::window::Window;
 
 #[repr(C)]
@@ -59,6 +58,60 @@ struct CommandBuffer {
     drawable: Id<dyn CAMetalDrawable>,
 }
 
+struct Texture {
+    texture: Id<dyn MTLTexture>,
+}
+
+#[native_impl]
+impl Texture {
+    fn replace_region(args: NativeArguments) {
+        let texture_instance = args.get_arg(0).unwrap();
+        let texture = texture_instance.get_peer::<Texture>().unwrap();
+
+        let region_x = args.get_integer_arg(1).unwrap() as usize;
+        let region_y = args.get_integer_arg(2).unwrap() as usize;
+        let region_z = args.get_integer_arg(3).unwrap() as usize;
+        let region_width = args.get_integer_arg(4).unwrap() as usize;
+        let region_height = args.get_integer_arg(5).unwrap() as usize;
+        let region_depth = args.get_integer_arg(6).unwrap() as usize;
+        let mipmap_level = args.get_integer_arg(7).unwrap() as usize;
+
+        let data_handle = args.get_arg(8).unwrap();
+        let bytes_per_row = args.get_integer_arg(9).unwrap() as usize;
+        let bytes_per_image = args.get_integer_arg(10).unwrap_or(0) as usize;
+
+        let view = TypedDataView::acquire(data_handle).unwrap();
+        let region = objc2_metal::MTLRegion {
+            origin: objc2_metal::MTLOrigin {
+                x: region_x,
+                y: region_y,
+                z: region_z,
+            },
+            size: objc2_metal::MTLSize {
+                width: region_width,
+                height: region_height,
+                depth: region_depth,
+            },
+        };
+
+        unsafe {
+            use core::ptr::NonNull;
+            let bytes_ptr = NonNull::new(view.data).unwrap().cast::<core::ffi::c_void>();
+            texture
+                .texture
+                .replaceRegion_mipmapLevel_slice_withBytes_bytesPerRow_bytesPerImage(
+                    region,
+                    mipmap_level,
+                    0,
+                    bytes_ptr,
+                    bytes_per_row,
+                    bytes_per_image,
+                );
+        }
+        drop(view);
+    }
+}
+
 struct ArgumentTable {
     table: Id<dyn MTL4ArgumentTable>,
 }
@@ -82,11 +135,49 @@ impl ArgumentTable {
                 .setAddress_atIndex(buffer_address, index);
         }
     }
+
+    fn set_texture(args: NativeArguments) {
+        let argument_table_instance = args.get_arg(0).unwrap();
+        let argument_table = argument_table_instance.get_peer::<ArgumentTable>().unwrap();
+
+        let texture_instance = args.get_arg(1).unwrap();
+        let texture = texture_instance.get_peer::<Texture>().unwrap();
+
+        let index = args.get_integer_arg(2).unwrap() as usize;
+
+        unsafe {
+            let resource_id = texture.texture.gpuResourceID();
+            argument_table.table.setTexture_atIndex(resource_id, index);
+        }
+    }
+}
+
+#[native_impl]
+impl Texture {
+    fn width(args: NativeArguments) {
+        let texture_instance = args.get_arg(0).unwrap();
+        let texture = texture_instance.get_peer::<Texture>().unwrap();
+        let width = texture.texture.width() as i64;
+        args.set_int_return_value(width);
+    }
+
+    fn height(args: NativeArguments) {
+        let texture_instance = args.get_arg(0).unwrap();
+        let texture = texture_instance.get_peer::<Texture>().unwrap();
+        let height = texture.texture.height() as i64;
+        args.set_int_return_value(height);
+    }
+
+    fn pixel_format(args: NativeArguments) {
+        let texture_instance = args.get_arg(0).unwrap();
+        let texture = texture_instance.get_peer::<Texture>().unwrap();
+        let pixel_format = texture.texture.pixelFormat().0 as i64;
+        args.set_int_return_value(pixel_format);
+    }
 }
 
 #[native_impl]
 impl CommandBuffer {
-    // TODO: pass actual descriptor info in args
     fn render_command_encoder(args: NativeArguments, scope: Scope<'_>) {
         let command_buffer_instance = args.get_arg(0).unwrap();
         let command_buffer = command_buffer_instance.get_peer::<CommandBuffer>().unwrap();
@@ -94,19 +185,94 @@ impl CommandBuffer {
             .get_field(scope.new_string("gpu").unwrap())
             .unwrap();
         let gpu = gpu_handle.get_peer::<Gpu>().unwrap();
-        // let render_command_encoder = command_buffer.drawable.current
+        let descriptor_instance = args.get_arg(1).unwrap();
+        let descriptor_map = descriptor_instance
+            .invoke(scope.new_string("toMap").unwrap(), &mut [])
+            .unwrap();
+
         let pass = MTL4RenderPassDescriptor::new();
-        let ca0 = unsafe { pass.colorAttachments().objectAtIndexedSubscript(0) };
-        let tex = command_buffer.drawable.texture();
-        ca0.setTexture(Some(tex.as_ref()));
-        ca0.setLoadAction(MTLLoadAction::Clear);
-        ca0.setStoreAction(MTLStoreAction::Store);
-        ca0.setClearColor(objc2_metal::MTLClearColor {
-            red: 0.0,
-            green: 0.0,
-            blue: 0.0,
-            alpha: 1.0,
-        });
+
+        // TODO: clean up this mess
+        let color_attachments_key = scope.new_string("colorAttachments").unwrap();
+        if let Ok(color_attachments_list) = descriptor_map.map_get(&scope, color_attachments_key) {
+            let list_obj = List::new(color_attachments_list).unwrap();
+            if let Ok(len) = list_obj.len() {
+                for i in 0..(len as usize) {
+                    if let Ok(ca_map) = list_obj.get(&scope, i as isize) {
+                        let ca = unsafe { pass.colorAttachments().objectAtIndexedSubscript(i) };
+
+                        // Extract texture (optional - falls back to drawable if null)
+                        let drawable_texture = command_buffer.drawable.texture();
+                        let texture_key = scope.new_string("texture").unwrap();
+                        let texture =
+                            if let Ok(texture_handle) = ca_map.map_get(&scope, texture_key) {
+                                if !texture_handle.is_null() {
+                                    if let Ok(texture_peer) = texture_handle.get_peer::<Texture>() {
+                                        Some(texture_peer.texture.as_ref())
+                                    } else {
+                                        // Invalid texture object, use drawable
+                                        Some(drawable_texture.as_ref())
+                                    }
+                                } else {
+                                    // Null texture, use drawable
+                                    Some(drawable_texture.as_ref())
+                                }
+                            } else {
+                                // No texture field, use drawable
+                                Some(drawable_texture.as_ref())
+                            };
+                        ca.setTexture(texture);
+
+                        // Extract load action
+                        let load_action_key = scope.new_string("loadAction").unwrap();
+                        if let Ok(load_action_handle) = ca_map.map_get(&scope, load_action_key) {
+                            if let Ok(load_action_val) = load_action_handle.to_i64() {
+                                ca.setLoadAction(MTLLoadAction(load_action_val as usize));
+                            }
+                        }
+
+                        // Extract store action
+                        let store_action_key = scope.new_string("storeAction").unwrap();
+                        if let Ok(store_action_handle) = ca_map.map_get(&scope, store_action_key) {
+                            if let Ok(store_action_val) = store_action_handle.to_i64() {
+                                ca.setStoreAction(MTLStoreAction(store_action_val as usize));
+                            }
+                        }
+
+                        // Extract clear color (optional)
+                        let clear_color_key = scope.new_string("clearColor").unwrap();
+                        if let Ok(clear_color_list) = ca_map.map_get(&scope, clear_color_key) {
+                            let clear_color_list_obj = List::new(clear_color_list).unwrap();
+                            if let Ok(clear_color_len) = clear_color_list_obj.len() {
+                                if clear_color_len >= 4 {
+                                    if let (Ok(r), Ok(g), Ok(b), Ok(a)) = (
+                                        clear_color_list_obj
+                                            .get(&scope, 0)
+                                            .and_then(|h| h.to_f64()),
+                                        clear_color_list_obj
+                                            .get(&scope, 1)
+                                            .and_then(|h| h.to_f64()),
+                                        clear_color_list_obj
+                                            .get(&scope, 2)
+                                            .and_then(|h| h.to_f64()),
+                                        clear_color_list_obj
+                                            .get(&scope, 3)
+                                            .and_then(|h| h.to_f64()),
+                                    ) {
+                                        ca.setClearColor(objc2_metal::MTLClearColor {
+                                            red: r,
+                                            green: g,
+                                            blue: b,
+                                            alpha: a,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         let render_command_encoder = gpu
             .command_buffer
@@ -127,6 +293,20 @@ impl CommandBuffer {
         render_command_encoder_instance
             .set_peer(Box::new(RenderCommandEncoder(render_command_encoder)));
         args.set_return_value(render_command_encoder_instance);
+    }
+
+    fn drawable(args: NativeArguments, scope: Scope<'_>) {
+        let command_buffer_instance = args.get_arg(0).unwrap();
+        let command_buffer = command_buffer_instance.get_peer::<CommandBuffer>().unwrap();
+        let texture = command_buffer.drawable.texture();
+
+        let library = scope.library("package:app/native.dart").unwrap();
+        let class_type = scope.get_class(library, "Texture").unwrap();
+        let class_instance = scope
+            .new_object(class_type, scope.null_handle().unwrap(), &mut [])
+            .unwrap();
+        class_instance.set_peer(Box::new(Texture { texture }));
+        args.set_return_value(class_instance);
     }
 }
 
@@ -551,6 +731,40 @@ impl Gpu {
         let gpu = gpu_instance.get_peer::<Gpu>().unwrap();
 
         gpu.residency_set.commit();
+    }
+
+    fn create_texture(args: NativeArguments, scope: Scope<'_>) {
+        let gpu_instance = args.get_arg(0).unwrap();
+        let gpu = gpu_instance.get_peer::<Gpu>().unwrap();
+        let width = args.get_integer_arg(1).unwrap() as usize;
+        let height = args.get_integer_arg(2).unwrap() as usize;
+        let pixel_format_value = args.get_integer_arg(3).unwrap() as usize;
+        let pixel_format = MTLPixelFormat(pixel_format_value);
+
+        let descriptor = MTLTextureDescriptor::new();
+        unsafe {
+            descriptor.setTextureType(MTLTextureType::Type2D);
+            descriptor.setWidth(width);
+            descriptor.setHeight(height);
+            descriptor.setPixelFormat(pixel_format);
+            descriptor.setStorageMode(objc2_metal::MTLStorageMode::Managed);
+            descriptor.setUsage(
+                MTLTextureUsage::ShaderRead
+                    | MTLTextureUsage::ShaderWrite
+                    | MTLTextureUsage::RenderTarget,
+            );
+            descriptor.setMipmapLevelCount(1);
+        }
+
+        let texture = unsafe { gpu.device.newTextureWithDescriptor(&descriptor) }.unwrap();
+
+        let library = scope.library("package:app/native.dart").unwrap();
+        let class_type = scope.get_class(library, "Texture").unwrap();
+        let class_instance = scope
+            .new_object(class_type, scope.null_handle().unwrap(), &mut [])
+            .unwrap();
+        class_instance.set_peer(Box::new(Texture { texture }));
+        args.set_return_value(class_instance);
     }
 }
 
