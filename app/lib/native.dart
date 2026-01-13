@@ -1,4 +1,3 @@
-import 'dart:ffi';
 import 'dart:nativewrappers';
 
 base class Window extends NativeFieldWrapperClass1 {
@@ -42,13 +41,54 @@ base class Gpu extends NativeFieldWrapperClass1 {
 @pragma("vm:entry-point")
 base class CommandBuffer extends NativeFieldWrapperClass1 {
   @pragma("vm:entry-point")
-  CommandBuffer();
+  CommandBuffer(this.gpu);
 
   @pragma("vm:entry-point")
-  external Gpu gpu;
+  Gpu gpu;
+
+  @pragma('vm:external-name', 'CommandBuffer_render_command_encoder')
+  external RenderCommandEncoder renderCommandEncoder();
 }
 
-base class RenderPipeline extends NativeFieldWrapperClass1 {}
+@pragma("vm:entry-point")
+base class RenderPipeline extends NativeFieldWrapperClass1 {
+  @pragma("vm:entry-point")
+  RenderPipeline();
+}
+
+@pragma("vm:entry-point")
+base class RenderCommandEncoder extends NativeFieldWrapperClass1 {
+  @pragma("vm:entry-point")
+  RenderCommandEncoder();
+
+  @pragma('vm:external-name', 'RenderCommandEncoder_set_render_pipeline')
+  external void setRenderPipeline(RenderPipeline renderPipeline);
+
+  @pragma('vm:external-name', 'RenderCommandEncoder_set_viewport')
+  external void setViewport(Viewport viewport);
+
+  @pragma('vm:external-name', 'RenderCommandEncoder_end_encoding')
+  external void endEncoding();
+}
+
+class Viewport {
+  Viewport({
+    required this.x,
+    required this.y,
+    required this.width,
+    required this.height,
+  });
+
+  final double x;
+  final double y;
+  final double width;
+  final double height;
+
+  @pragma("vm:entry-point")
+  Map<String, dynamic> toMap() {
+    return {'x': x, 'y': y, 'width': width, 'height': height};
+  }
+}
 
 class RenderPipelineDescriptor {
   String label = "Unnamed Render Pipeline Descriptor";

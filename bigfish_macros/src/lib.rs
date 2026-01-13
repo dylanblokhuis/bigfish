@@ -61,7 +61,8 @@ pub fn native_impl(_attr: TokenStream, item: TokenStream) -> TokenStream {
         }
 
         let fn_name = &f.sig.ident;
-        let shim_name = syn::Ident::new(&format!("__shim_{}", fn_name), fn_name.span());
+        let shim_name =
+            syn::Ident::new(&format!("__shim_{}_{}", type_tag, fn_name), fn_name.span());
         let dart_fn_name =
             syn::Ident::new(&format!("{}_{}", type_tag, f.sig.ident), f.sig.ident.span());
 

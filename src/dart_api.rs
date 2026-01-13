@@ -495,6 +495,13 @@ impl<'s> Handle<'s> {
     pub fn get_peer<'a, T>(self) -> Result<&'a mut T> {
         let mut peer = MaybeUninit::<*mut T>::uninit();
         check(unsafe { sys::Dart_GetPeer(self.raw, peer.as_mut_ptr() as *mut *mut c_void) })?;
+        if unsafe { *peer.as_mut_ptr() }.is_null() {
+            // Use std::any::type_name to print the type at debug time
+            return Err(DartError::Api(format!(
+                "Dart_GetPeer returned null for type {}",
+                std::any::type_name::<T>()
+            )));
+        }
         Ok(unsafe { &mut *peer.assume_init() })
     }
 

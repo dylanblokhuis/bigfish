@@ -4,10 +4,11 @@ use objc2_foundation::NSUInteger;
 use objc2_metal::{
     MTL4ArgumentTable, MTL4ArgumentTableDescriptor, MTL4BlendState, MTL4CommandAllocator,
     MTL4CommandBuffer, MTL4CommandQueue, MTL4Compiler, MTL4CompilerDescriptor,
-    MTL4RenderPassDescriptor, MTL4RenderPipelineDescriptor, MTLBlendFactor, MTLColorWriteMask,
-    MTLCreateSystemDefaultDevice, MTLDevice, MTLEvent, MTLLoadAction, MTLPixelFormat,
-    MTLPrimitiveTopologyClass, MTLPrimitiveType, MTLRenderPipelineState, MTLRenderStages,
-    MTLResidencySet, MTLResidencySetDescriptor, MTLSharedEvent, MTLStoreAction, MTLViewport,
+    MTL4RenderCommandEncoder, MTL4RenderPassDescriptor, MTL4RenderPipelineDescriptor,
+    MTLBlendFactor, MTLColorWriteMask, MTLCreateSystemDefaultDevice, MTLDevice, MTLEvent,
+    MTLLoadAction, MTLPixelFormat, MTLPrimitiveTopologyClass, MTLPrimitiveType,
+    MTLRenderPipelineState, MTLRenderStages, MTLResidencySet, MTLResidencySetDescriptor,
+    MTLSharedEvent, MTLStoreAction, MTLViewport,
 };
 // Bring ObjC protocol traits into scope for method resolution.
 use objc2_metal::{
@@ -59,6 +60,111 @@ struct Gpu {
 
 struct CommandBuffer {
     drawable: Id<dyn CAMetalDrawable>,
+}
+
+#[native_impl]
+impl CommandBuffer {
+    // TODO: pass actual descriptor info in args
+    fn render_command_encoder(args: NativeArguments) {
+        let command_buffer_instance = args.get_arg(0).unwrap();
+        let command_buffer = command_buffer_instance.get_peer::<CommandBuffer>().unwrap();
+        let scope = Isolate::current().unwrap();
+        let gpu_handle = command_buffer_instance
+            .get_field(scope.new_string("gpu").unwrap())
+            .unwrap();
+        let gpu = gpu_handle.get_peer::<Gpu>().unwrap();
+        // let render_command_encoder = command_buffer.drawable.current
+        let pass = MTL4RenderPassDescriptor::new();
+        let ca0 = unsafe { pass.colorAttachments().objectAtIndexedSubscript(0) };
+        let tex = command_buffer.drawable.texture();
+        ca0.setTexture(Some(tex.as_ref()));
+        ca0.setLoadAction(MTLLoadAction::Clear);
+        ca0.setStoreAction(MTLStoreAction::Store);
+        ca0.setClearColor(objc2_metal::MTLClearColor {
+            red: 0.0,
+            green: 0.0,
+            blue: 0.0,
+            alpha: 1.0,
+        });
+
+        let render_command_encoder = gpu
+            .command_buffer
+            .renderCommandEncoderWithDescriptor(&pass)
+            .unwrap();
+        let render_command_encoder_instance = scope
+            .new_object(
+                scope
+                    .get_class(
+                        scope.library("package:app/native.dart").unwrap(),
+                        "RenderCommandEncoder",
+                    )
+                    .unwrap(),
+                scope.null_handle().unwrap(),
+                &mut [],
+            )
+            .unwrap();
+        render_command_encoder_instance
+            .set_peer(Box::new(RenderCommandEncoder(render_command_encoder)));
+        args.set_return_value(render_command_encoder_instance);
+    }
+}
+
+struct RenderCommandEncoder(Id<dyn MTL4RenderCommandEncoder>);
+
+#[native_impl]
+impl RenderCommandEncoder {
+    fn set_render_pipeline(args: NativeArguments) {
+        let render_command_encoder_instance = args.get_arg(0).unwrap();
+        let render_command_encoder = render_command_encoder_instance
+            .get_peer::<RenderCommandEncoder>()
+            .unwrap();
+
+        let render_pipeline = args.get_arg(1).unwrap();
+        let render_pipeline = render_pipeline.get_peer::<RenderPipeline>().unwrap();
+
+        render_command_encoder
+            .0
+            .setRenderPipelineState(&render_pipeline.render_pipeline_state);
+    }
+
+    fn set_viewport(args: NativeArguments) {
+        let render_command_encoder_instance = args.get_arg(0).unwrap();
+        let render_command_encoder = render_command_encoder_instance
+            .get_peer::<RenderCommandEncoder>()
+            .unwrap();
+
+        let viewport = args.get_arg(1).unwrap();
+        let scope = Isolate::current().unwrap();
+        let viewport = viewport
+            .invoke(scope.new_string("toMap").unwrap(), &mut [])
+            .unwrap();
+        let viewport = from_dart::<Viewport>(viewport).unwrap();
+
+        render_command_encoder.0.setViewport(MTLViewport {
+            originX: viewport.x,
+            originY: viewport.y,
+            width: viewport.width,
+            height: viewport.height,
+            znear: 0.0,
+            zfar: 1.0,
+        });
+    }
+
+    fn end_encoding(args: NativeArguments) {
+        let render_command_encoder_instance = args.get_arg(0).unwrap();
+        let render_command_encoder = render_command_encoder_instance
+            .get_peer::<RenderCommandEncoder>()
+            .unwrap();
+        render_command_encoder.0.endEncoding();
+    }
+}
+
+#[derive(Deserialize)]
+struct Viewport {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
 }
 
 #[native_impl]
@@ -255,10 +361,14 @@ fragment float4 fragmentShader(VSOut in [[stage_in]]) {
         let class_type = scope.get_class(library, "CommandBuffer").unwrap();
         // let constructor_name = scope.new_string("CommandBuffer").unwrap();
         let class_instance = scope
-            .new_object(class_type, scope.null_handle().unwrap(), &mut [])
+            .new_object(
+                class_type,
+                scope.null_handle().unwrap(),
+                &mut [gpu_instance.raw()],
+            )
             .unwrap();
         class_instance.set_peer(Box::new(CommandBuffer { drawable }));
-        class_instance.set_field(scope.new_string("gpu").unwrap(), &gpu_instance);
+        // class_instance.set_field(scope.new_string("gpu").unwrap(), &gpu_instance);
         args.set_return_value(class_instance);
     }
 
