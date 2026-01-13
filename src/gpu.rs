@@ -1,6 +1,5 @@
 use bigfish_macros::native_impl;
 use objc2::{rc::Retained, runtime::ProtocolObject};
-use objc2_foundation::NSUInteger;
 use objc2_metal::{
     MTL4ArgumentTable, MTL4ArgumentTableDescriptor, MTL4BlendState, MTL4CommandAllocator,
     MTL4CommandBuffer, MTL4CommandQueue, MTL4Compiler, MTL4CompilerDescriptor,
@@ -51,7 +50,6 @@ struct Gpu {
     command_allocators: Vec<Id<dyn MTL4CommandAllocator>>,
     compiler: Id<dyn MTL4Compiler>,
     residency_set: Id<dyn MTLResidencySet>,
-    argument_table: Id<dyn MTL4ArgumentTable>,
     shared_event: Id<dyn MTLSharedEvent>,
     frame_number: u64,
     window_peer: *mut Window,
@@ -59,6 +57,31 @@ struct Gpu {
 
 struct CommandBuffer {
     drawable: Id<dyn CAMetalDrawable>,
+}
+
+struct ArgumentTable {
+    table: Id<dyn MTL4ArgumentTable>,
+}
+
+#[native_impl]
+impl ArgumentTable {
+    fn set_buffer(args: NativeArguments) {
+        let argument_table_instance = args.get_arg(0).unwrap();
+        let argument_table = argument_table_instance.get_peer::<ArgumentTable>().unwrap();
+
+        let buffer_instance = args.get_arg(1).unwrap();
+        let buffer = buffer_instance.get_peer::<Buffer>().unwrap();
+
+        let index = args.get_integer_arg(2).unwrap() as usize;
+        let offset = args.get_integer_arg(3).unwrap_or(0) as usize;
+
+        let buffer_address = buffer.buffer.gpuAddress() + offset as u64;
+        unsafe {
+            argument_table
+                .table
+                .setAddress_atIndex(buffer_address, index);
+        }
+    }
 }
 
 #[native_impl]
@@ -227,17 +250,18 @@ impl RenderCommandEncoder {
     //     }
     // }
 
-    fn set_argument_table(args: NativeArguments) {
+    fn set_argument_table_object(args: NativeArguments) {
         let render_command_encoder_instance = args.get_arg(0).unwrap();
         let render_command_encoder = render_command_encoder_instance
             .get_peer::<RenderCommandEncoder>()
             .unwrap();
-        let gpu_instance = args.get_arg(1).unwrap();
-        let gpu = gpu_instance.get_peer::<Gpu>().unwrap();
+
+        let argument_table_instance = args.get_arg(1).unwrap();
+        let argument_table = argument_table_instance.get_peer::<ArgumentTable>().unwrap();
 
         unsafe {
             render_command_encoder.0.setArgumentTable_atStages(
-                gpu.argument_table.as_ref(),
+                argument_table.table.as_ref(),
                 MTLRenderStages::Vertex | MTLRenderStages::Fragment,
             );
         }
@@ -282,13 +306,6 @@ impl Gpu {
             layer.setMaximumDrawableCount(frames_in_flight as usize);
         }
 
-        // Argument table: two GPU addresses (triangle data + viewport size).
-        let table_desc = MTL4ArgumentTableDescriptor::new();
-        table_desc.setMaxBufferBindCount(2);
-        let argument_table = device
-            .newArgumentTableWithDescriptor_error(&table_desc)
-            .unwrap();
-
         command_queue.addResidencySet(&residency_set);
 
         #[cfg(target_os = "macos")]
@@ -311,12 +328,42 @@ impl Gpu {
             command_buffer,
             command_allocators,
             residency_set,
-            argument_table,
             compiler,
             shared_event,
             frame_number: 0,
             window_peer,
         }));
+    }
+
+    fn create_argument_table(args: NativeArguments, scope: Scope<'_>) {
+        let gpu_instance = args.get_arg(0).unwrap();
+        let gpu = gpu_instance.get_peer::<Gpu>().unwrap();
+
+        let max_buffer_bind_count = args.get_integer_arg(1).unwrap() as usize;
+        let max_texture_bind_count = args.get_integer_arg(2).unwrap() as usize;
+        let max_sampler_state_bind_count = args.get_integer_arg(3).unwrap() as usize;
+        let table_desc = MTL4ArgumentTableDescriptor::new();
+        if max_buffer_bind_count > 0 {
+            table_desc.setMaxBufferBindCount(max_buffer_bind_count);
+        }
+        if max_texture_bind_count > 0 {
+            table_desc.setMaxTextureBindCount(max_texture_bind_count);
+        }
+        if max_sampler_state_bind_count > 0 {
+            table_desc.setMaxSamplerStateBindCount(max_sampler_state_bind_count);
+        }
+        let table = gpu
+            .device
+            .newArgumentTableWithDescriptor_error(&table_desc)
+            .unwrap();
+
+        let library = scope.library("package:app/native.dart").unwrap();
+        let class_type = scope.get_class(library, "ArgumentTable").unwrap();
+        let class_instance = scope
+            .new_object(class_type, scope.null_handle().unwrap(), &mut [])
+            .unwrap();
+        class_instance.set_peer(Box::new(ArgumentTable { table }));
+        args.set_return_value(class_instance);
     }
 
     fn render_pipeline_descriptor(args: NativeArguments) {}
@@ -504,22 +551,6 @@ impl Gpu {
         let gpu = gpu_instance.get_peer::<Gpu>().unwrap();
 
         gpu.residency_set.commit();
-    }
-
-    fn set_buffer_in_argument_table(args: NativeArguments) {
-        let gpu_instance = args.get_arg(0).unwrap();
-        let gpu = gpu_instance.get_peer::<Gpu>().unwrap();
-        let buffer_instance = args.get_arg(1).unwrap();
-        let buffer = buffer_instance.get_peer::<Buffer>().unwrap();
-        let index = args.get_integer_arg(2).unwrap() as usize;
-        let offset = args.get_integer_arg(3).unwrap_or(0) as usize;
-
-        // Get the GPU address of the buffer
-        let buffer_address = buffer.buffer.gpuAddress() + offset as u64;
-
-        unsafe {
-            gpu.argument_table.setAddress_atIndex(buffer_address, index);
-        }
     }
 }
 

@@ -10,6 +10,7 @@ class SimpleRaster {
   late RenderPipeline renderPipeline;
   late Buffer vertexBuffer;
   late Buffer viewportBuffer;
+  late ArgumentTable argumentTable;
 
   SimpleRaster(Gpu gpu) {
     final metalShader = File("./app/shaders/Shaders.metal").readAsStringSync();
@@ -45,9 +46,10 @@ class SimpleRaster {
     // Make residency additions visible to the GPU.
     gpu.commitResidencySet();
 
-    // Initialize the argument table bindings (buffer indices in shader).
-    gpu.setBufferInArgumentTable(vertexBuffer, 0);
-    gpu.setBufferInArgumentTable(viewportBuffer, 1);
+    // Create the argument table and bind GPU addresses (buffer indices in shader).
+    argumentTable = gpu.createArgumentTable(maxBufferBindCount: 2);
+    argumentTable.setBuffer(vertexBuffer, 0);
+    argumentTable.setBuffer(viewportBuffer, 1);
   }
 }
 
@@ -90,7 +92,7 @@ void present(World world, Gpu gpu, double interpolation) {
     _triangleVerticesBytes(rotationDegrees),
   );
 
-  renderCommandEncoder.setArgumentTable(gpu);
+  renderCommandEncoder.setArgumentTableObject(simpleRaster.argumentTable);
   renderCommandEncoder.setViewport(width: 800, height: 600);
   renderCommandEncoder.drawPrimitives(
     primitiveType: PrimitiveType.triangle,

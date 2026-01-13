@@ -47,12 +47,33 @@ base class Gpu extends NativeFieldWrapperClass1 {
   @pragma('vm:external-name', 'Gpu_commit_residency_set')
   external void commitResidencySet();
 
-  @pragma('vm:external-name', 'Gpu_set_buffer_in_argument_table')
-  external void setBufferInArgumentTable(
-    Buffer buffer,
-    int index, [
-    int offset = 0,
-  ]);
+  @pragma('vm:external-name', 'Gpu_create_argument_table')
+  external ArgumentTable _createArgumentTable(
+    int maxBufferBindCount,
+    int maxTextureBindCount,
+    int maxSamplerStateBindCount,
+  );
+
+  ArgumentTable createArgumentTable({
+    int maxBufferBindCount = 0,
+    int maxTextureBindCount = 0,
+    int maxSamplerStateBindCount = 0,
+  }) {
+    return _createArgumentTable(
+      maxBufferBindCount,
+      maxTextureBindCount,
+      maxSamplerStateBindCount,
+    );
+  }
+}
+
+@pragma("vm:entry-point")
+base class ArgumentTable extends NativeFieldWrapperClass1 {
+  @pragma("vm:entry-point")
+  ArgumentTable();
+
+  @pragma('vm:external-name', 'ArgumentTable_set_buffer')
+  external void setBuffer(Buffer buffer, int index, [int offset = 0]);
 }
 
 @pragma("vm:entry-point")
@@ -185,8 +206,8 @@ base class RenderCommandEncoder extends NativeFieldWrapperClass1 {
   //   );
   // }
 
-  @pragma('vm:external-name', 'RenderCommandEncoder_set_argument_table')
-  external void setArgumentTable(Gpu gpu);
+  @pragma('vm:external-name', 'RenderCommandEncoder_set_argument_table_object')
+  external void setArgumentTableObject(ArgumentTable argumentTable);
 
   @pragma('vm:external-name', 'RenderCommandEncoder_end_encoding')
   external void endEncoding();
