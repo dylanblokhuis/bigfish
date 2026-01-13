@@ -12,13 +12,15 @@ use objc2_metal::{
 };
 // Bring ObjC protocol traits into scope for method resolution.
 use objc2_metal::{
-    MTL4CommandEncoder as _, MTL4Compiler as _, MTL4RenderCommandEncoder as _, MTLBuffer as _,
-    MTLDrawable as _,
+    MTL4ArgumentTable as _, MTL4CommandEncoder as _, MTL4Compiler as _,
+    MTL4RenderCommandEncoder as _, MTLBuffer as _, MTLDrawable as _,
 };
 use objc2_quartz_core::CAMetalDrawable;
 use serde::{Deserialize, Serialize};
 
-use crate::dart_api::{from_dart, Isolate, NativeArguments, Scope};
+use crate::dart_api::{
+    from_dart, Handle, Isolate, List, NativeArguments, Result, Scope, TypedDataView,
+};
 use crate::window::Window;
 
 #[repr(C)]
@@ -50,9 +52,6 @@ struct Gpu {
     compiler: Id<dyn MTL4Compiler>,
     residency_set: Id<dyn MTLResidencySet>,
     argument_table: Id<dyn MTL4ArgumentTable>,
-    render_pipeline_state: Id<dyn MTLRenderPipelineState>,
-    triangle_vertex_buffers: Vec<Id<dyn objc2_metal::MTLBuffer>>,
-    viewport_size_buffer: Id<dyn objc2_metal::MTLBuffer>,
     shared_event: Id<dyn MTLSharedEvent>,
     frame_number: u64,
     window_peer: *mut Window,
@@ -147,6 +146,39 @@ impl RenderCommandEncoder {
         });
     }
 
+    fn set_scissor_rect(args: NativeArguments) {
+        let render_command_encoder_instance = args.get_arg(0).unwrap();
+        let render_command_encoder = render_command_encoder_instance
+            .get_peer::<RenderCommandEncoder>()
+            .unwrap();
+
+        let x = args.get_integer_arg(1).unwrap() as usize;
+        let y = args.get_integer_arg(2).unwrap() as usize;
+        let width = args.get_integer_arg(3).unwrap() as usize;
+        let height = args.get_integer_arg(4).unwrap() as usize;
+
+        render_command_encoder
+            .0
+            .setScissorRect(objc2_metal::MTLScissorRect {
+                x,
+                y,
+                width,
+                height,
+            });
+    }
+
+    fn set_cull_mode(args: NativeArguments) {
+        let render_command_encoder_instance = args.get_arg(0).unwrap();
+        let render_command_encoder = render_command_encoder_instance
+            .get_peer::<RenderCommandEncoder>()
+            .unwrap();
+
+        let mode = args.get_integer_arg(1).unwrap() as usize;
+        render_command_encoder
+            .0
+            .setCullMode(objc2_metal::MTLCullMode(mode));
+    }
+
     fn draw_primitives(args: NativeArguments) {
         let render_command_encoder_instance = args.get_arg(0).unwrap();
         let render_command_encoder = render_command_encoder_instance
@@ -155,7 +187,7 @@ impl RenderCommandEncoder {
         let primitive_type = args.get_integer_arg(1).unwrap();
         let vertex_count = args.get_integer_arg(2).unwrap();
         let instance_count = args.get_integer_arg(3).unwrap();
-        let base_vertex = args.get_integer_arg(4).unwrap();
+        let vertex_start = args.get_integer_arg(4).unwrap();
         let base_instance = args.get_integer_arg(5).unwrap();
 
         unsafe {
@@ -163,11 +195,51 @@ impl RenderCommandEncoder {
                 .0
                 .drawPrimitives_vertexStart_vertexCount_instanceCount_baseInstance(
                     MTLPrimitiveType(primitive_type as usize),
+                    vertex_start as usize,
                     vertex_count as usize,
                     instance_count as usize,
-                    base_vertex as usize,
                     base_instance as usize,
                 );
+        }
+    }
+
+    // fn draw_indexed_primitives(args: NativeArguments) {
+    //     let render_command_encoder_instance = args.get_arg(0).unwrap();
+    //     let render_command_encoder = render_command_encoder_instance
+    //         .get_peer::<RenderCommandEncoder>()
+    //         .unwrap();
+    //     let primitive_type = args.get_integer_arg(1).unwrap();
+    //     let index_count = args.get_integer_arg(2).unwrap();
+    //     let instance_count = args.get_integer_arg(3).unwrap();
+    //     let base_vertex = args.get_integer_arg(4).unwrap();
+    //     let base_instance = args.get_integer_arg(5).unwrap();
+
+    //     unsafe {
+    //         render_command_encoder
+    //             .0
+    //             .drawIndexedPrimitives_indexCount_indexType_indexBuffer_indexBufferLength_instanceCount_baseVertex_baseInstance(
+    //                 MTLPrimitiveType(primitive_type as usize),
+    //                 index_count as usize,
+    //                 instance_count as usize,
+    //                 base_vertex as usize,
+    //                 base_instance as usize,
+    //             );
+    //     }
+    // }
+
+    fn set_argument_table(args: NativeArguments) {
+        let render_command_encoder_instance = args.get_arg(0).unwrap();
+        let render_command_encoder = render_command_encoder_instance
+            .get_peer::<RenderCommandEncoder>()
+            .unwrap();
+        let gpu_instance = args.get_arg(1).unwrap();
+        let gpu = gpu_instance.get_peer::<Gpu>().unwrap();
+
+        unsafe {
+            render_command_encoder.0.setArgumentTable_atStages(
+                gpu.argument_table.as_ref(),
+                MTLRenderStages::Vertex | MTLRenderStages::Fragment,
+            );
         }
     }
 
@@ -178,14 +250,6 @@ impl RenderCommandEncoder {
             .unwrap();
         render_command_encoder.0.endEncoding();
     }
-}
-
-#[derive(Deserialize)]
-struct Viewport {
-    x: f64,
-    y: f64,
-    width: f64,
-    height: f64,
 }
 
 #[native_impl]
@@ -225,31 +289,6 @@ impl Gpu {
             .newArgumentTableWithDescriptor_error(&table_desc)
             .unwrap();
 
-        // Buffers.
-        let mut triangle_vertex_buffers = Vec::with_capacity(frames_in_flight);
-        for _ in 0..frames_in_flight {
-            let buf = device
-                .newBufferWithLength_options(
-                    core::mem::size_of::<TriangleData>() as usize,
-                    objc2_metal::MTLResourceOptions::StorageModeShared,
-                )
-                .unwrap();
-            triangle_vertex_buffers.push(buf);
-        }
-
-        let viewport_size_buffer = device
-            .newBufferWithLength_options(
-                core::mem::size_of::<ViewportSize>() as usize,
-                objc2_metal::MTLResourceOptions::StorageModeShared,
-            )
-            .unwrap();
-
-        // Add long-lived buffers to residency set and attach sets to queue.
-        residency_set.addAllocation(viewport_size_buffer.as_ref());
-        for b in &triangle_vertex_buffers {
-            residency_set.addAllocation(b.as_ref());
-        }
-        residency_set.commit();
         command_queue.addResidencySet(&residency_set);
 
         #[cfg(target_os = "macos")]
@@ -257,71 +296,6 @@ impl Gpu {
             let window = unsafe { &*window_peer };
             command_queue.addResidencySet(&window.metal_layer().residencySet());
         }
-
-        // Compile pipeline via Metal 4 compiler.
-        let compiler_desc = MTL4CompilerDescriptor::new();
-        let compiler = device
-            .newCompilerWithDescriptor_error(&compiler_desc)
-            .unwrap();
-
-        let shader_src = objc2_foundation::NSString::from_str(
-            r#"
-#include <metal_stdlib>
-using namespace metal;
-
-struct Vertex { float4 position; float4 color; };
-struct TriangleData { Vertex vertices[3]; };
-struct ViewportSize { uint2 size; };
-
-struct Args {
-    device TriangleData* tri [[id(0)]];
-    device ViewportSize* viewport [[id(1)]];
-} [[argument_table]];
-
-struct VSOut { float4 position [[position]]; float4 color; };
-
-vertex VSOut vertexShader(uint vid [[vertex_id]], Args args [[argument_table]]) {
-    VSOut out;
-    Vertex v = args.tri->vertices[vid];
-    out.position = v.position;
-    out.color = v.color;
-    return out;
-}
-
-fragment float4 fragmentShader(VSOut in [[stage_in]]) {
-    return in.color;
-}
-"#,
-        );
-
-        let library = device
-            .newLibraryWithSource_options_error(&shader_src, None)
-            .unwrap();
-
-        let vfd = objc2_metal::MTL4LibraryFunctionDescriptor::new();
-        vfd.setLibrary(Some(&library));
-        vfd.setName(Some(&objc2_foundation::NSString::from_str("vertexShader")));
-
-        let ffd = objc2_metal::MTL4LibraryFunctionDescriptor::new();
-        ffd.setLibrary(Some(&library));
-        ffd.setName(Some(&objc2_foundation::NSString::from_str(
-            "fragmentShader",
-        )));
-
-        let rp_desc = MTL4RenderPipelineDescriptor::new();
-        rp_desc.setVertexFunctionDescriptor(Some(&*vfd));
-        rp_desc.setFragmentFunctionDescriptor(Some(&*ffd));
-        // rp_desc.colorAttachments().
-        unsafe {
-            rp_desc
-                .colorAttachments()
-                .objectAtIndexedSubscript(0)
-                .setPixelFormat(MTLPixelFormat::BGRA8Unorm);
-        }
-
-        let render_pipeline_state = compiler
-            .newRenderPipelineStateWithDescriptor_compilerTaskOptions_error(&rp_desc, None)
-            .unwrap();
 
         let shared_event = device.newSharedEvent().unwrap();
         shared_event.setSignaledValue(0);
@@ -339,9 +313,6 @@ fragment float4 fragmentShader(VSOut in [[stage_in]]) {
             residency_set,
             argument_table,
             compiler,
-            render_pipeline_state,
-            triangle_vertex_buffers,
-            viewport_size_buffer,
             shared_event,
             frame_number: 0,
             window_peer,
@@ -497,10 +468,162 @@ fragment float4 fragmentShader(VSOut in [[stage_in]]) {
         class_instance.set_field(scope.new_string("gpu").unwrap(), &gpu_instance);
         args.set_return_value(class_instance);
     }
+
+    fn create_buffer(args: NativeArguments, scope: Scope<'_>) {
+        let gpu_instance = args.get_arg(0).unwrap();
+        let gpu = gpu_instance.get_peer::<Gpu>().unwrap();
+        let length = args.get_integer_arg(1).unwrap() as usize;
+        // For now, always use StorageModeShared
+        // TODO: Support other storage modes if needed
+        let options = objc2_metal::MTLResourceOptions::StorageModeShared;
+        let buffer = gpu
+            .device
+            .newBufferWithLength_options(length, options)
+            .unwrap();
+
+        let library = scope.library("package:app/native.dart").unwrap();
+        let class_type = scope.get_class(library, "Buffer").unwrap();
+        let class_instance = scope
+            .new_object(class_type, scope.null_handle().unwrap(), &mut [])
+            .unwrap();
+        class_instance.set_peer(Box::new(Buffer { buffer }));
+        args.set_return_value(class_instance);
+    }
+
+    fn add_buffer_to_residency_set(args: NativeArguments) {
+        let gpu_instance = args.get_arg(0).unwrap();
+        let gpu = gpu_instance.get_peer::<Gpu>().unwrap();
+        let buffer_instance = args.get_arg(1).unwrap();
+        let buffer = buffer_instance.get_peer::<Buffer>().unwrap();
+
+        gpu.residency_set.addAllocation(buffer.buffer.as_ref());
+    }
+
+    fn commit_residency_set(args: NativeArguments) {
+        let gpu_instance = args.get_arg(0).unwrap();
+        let gpu = gpu_instance.get_peer::<Gpu>().unwrap();
+
+        gpu.residency_set.commit();
+    }
+
+    fn set_buffer_in_argument_table(args: NativeArguments) {
+        let gpu_instance = args.get_arg(0).unwrap();
+        let gpu = gpu_instance.get_peer::<Gpu>().unwrap();
+        let buffer_instance = args.get_arg(1).unwrap();
+        let buffer = buffer_instance.get_peer::<Buffer>().unwrap();
+        let index = args.get_integer_arg(2).unwrap() as usize;
+        let offset = args.get_integer_arg(3).unwrap_or(0) as usize;
+
+        // Get the GPU address of the buffer
+        let buffer_address = buffer.buffer.gpuAddress() + offset as u64;
+
+        unsafe {
+            gpu.argument_table.setAddress_atIndex(buffer_address, index);
+        }
+    }
 }
 
 struct RenderPipeline {
     render_pipeline_state: Id<dyn MTLRenderPipelineState>,
+}
+
+struct Buffer {
+    buffer: Id<dyn objc2_metal::MTLBuffer>,
+}
+
+#[native_impl]
+impl Buffer {
+    fn length(args: NativeArguments) {
+        let buffer_instance = args.get_arg(0).unwrap();
+        let buffer = buffer_instance.get_peer::<Buffer>().unwrap();
+        let length = buffer.buffer.length() as i64;
+        args.set_int_return_value(length);
+    }
+
+    fn gpu_address(args: NativeArguments) {
+        let buffer_instance = args.get_arg(0).unwrap();
+        let buffer = buffer_instance.get_peer::<Buffer>().unwrap();
+        let addr = buffer.buffer.gpuAddress() as i64;
+        args.set_int_return_value(addr);
+    }
+
+    fn contents(args: NativeArguments, scope: Scope<'_>) {
+        let buffer_instance = args.get_arg(0).unwrap();
+        let buffer = buffer_instance.get_peer::<Buffer>().unwrap();
+        let length = buffer.buffer.length();
+        let contents_ptr = buffer.buffer.contents().as_ptr() as *const u8;
+
+        // Try to create Uint8List via dart:typed_data
+        // If that fails, fall back to creating a regular List
+        let uint8_list = (|| -> Result<Handle> {
+            let library = scope.library("dart:typed_data")?;
+            let uint8_list_class = scope.get_class(library, "Uint8List")?;
+            let length_handle = scope.new_integer(length as i64)?;
+            let list_instance = scope.new_object(
+                uint8_list_class,
+                scope.null_handle()?,
+                &mut [length_handle.raw()],
+            )?;
+
+            // Copy data into the list using TypedDataView
+            let view = TypedDataView::acquire(list_instance)?;
+            unsafe {
+                let slice = core::slice::from_raw_parts(contents_ptr, length);
+                core::ptr::copy_nonoverlapping(slice.as_ptr(), view.data, length);
+            }
+            Ok(list_instance)
+        })();
+
+        match uint8_list {
+            Ok(list) => args.set_return_value(list),
+            Err(_) => {
+                // Fallback: create a regular List<int>
+                let list_handle = unsafe { crate::dart_api::sys::Dart_NewList(length as isize) };
+                let list = Handle::from_raw(list_handle);
+                if !list.is_null() {
+                    let list_obj = List::new(list).unwrap();
+                    unsafe {
+                        let slice = core::slice::from_raw_parts(contents_ptr, length);
+                        for (i, &byte) in slice.iter().enumerate() {
+                            let byte_handle = scope.new_integer(byte as i64).unwrap();
+                            list_obj.set(i as isize, byte_handle).unwrap();
+                        }
+                    }
+                    args.set_return_value(list);
+                } else {
+                    args.set_return_value(scope.null_handle().unwrap());
+                }
+            }
+        }
+    }
+
+    fn set_contents(args: NativeArguments) {
+        let buffer_instance = args.get_arg(0).unwrap();
+        let buffer = buffer_instance.get_peer::<Buffer>().unwrap();
+        let data_handle = args.get_arg(1).unwrap();
+
+        let length = buffer.buffer.length();
+        let contents_ptr = buffer.buffer.contents().as_ptr() as *mut u8;
+
+        // Use TypedDataView for efficient access
+        let view = TypedDataView::acquire(data_handle).unwrap();
+        let copy_length = core::cmp::min(length, view.len as usize);
+        unsafe {
+            core::ptr::copy_nonoverlapping(view.data, contents_ptr, copy_length);
+        }
+        drop(view);
+    }
+
+    fn label(args: NativeArguments, scope: Scope<'_>) {
+        // Label methods may not be available on all MTLBuffer implementations
+        // Return null for now - can be implemented if needed
+        args.set_return_value(scope.null_handle().unwrap());
+    }
+
+    fn set_label(args: NativeArguments, scope: Scope<'_>) {
+        // Label methods may not be available on all MTLBuffer implementations
+        // No-op for now - can be implemented if needed
+    }
 }
 
 #[derive(Deserialize, Serialize, Debug)]

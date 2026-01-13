@@ -1,4 +1,5 @@
 import 'dart:nativewrappers';
+import 'dart:typed_data';
 
 base class Window extends NativeFieldWrapperClass1 {
   Window({required int width, required int height, required String title}) {
@@ -36,6 +37,22 @@ base class Gpu extends NativeFieldWrapperClass1 {
   external RenderPipeline compileRenderPipeline(
     RenderPipelineDescriptor descriptor,
   );
+
+  @pragma('vm:external-name', 'Gpu_create_buffer')
+  external Buffer createBuffer(int length, [int storageMode = 0]);
+
+  @pragma('vm:external-name', 'Gpu_add_buffer_to_residency_set')
+  external void addBufferToResidencySet(Buffer buffer);
+
+  @pragma('vm:external-name', 'Gpu_commit_residency_set')
+  external void commitResidencySet();
+
+  @pragma('vm:external-name', 'Gpu_set_buffer_in_argument_table')
+  external void setBufferInArgumentTable(
+    Buffer buffer,
+    int index, [
+    int offset = 0,
+  ]);
 }
 
 @pragma("vm:entry-point")
@@ -57,6 +74,30 @@ base class RenderPipeline extends NativeFieldWrapperClass1 {
 }
 
 @pragma("vm:entry-point")
+base class Buffer extends NativeFieldWrapperClass1 {
+  @pragma("vm:entry-point")
+  Buffer();
+
+  @pragma('vm:external-name', 'Buffer_length')
+  external int length();
+
+  @pragma('vm:external-name', 'Buffer_gpu_address')
+  external int gpuAddress();
+
+  @pragma('vm:external-name', 'Buffer_contents')
+  external Uint8List contents();
+
+  @pragma('vm:external-name', 'Buffer_set_contents')
+  external void setContents(Uint8List data);
+
+  @pragma('vm:external-name', 'Buffer_label')
+  external String? label();
+
+  @pragma('vm:external-name', 'Buffer_set_label')
+  external void setLabel(String label);
+}
+
+@pragma("vm:entry-point")
 base class RenderCommandEncoder extends NativeFieldWrapperClass1 {
   @pragma("vm:entry-point")
   RenderCommandEncoder();
@@ -75,6 +116,23 @@ base class RenderCommandEncoder extends NativeFieldWrapperClass1 {
   }) {
     _setViewport(x, y, width, height);
   }
+
+  @pragma('vm:external-name', 'RenderCommandEncoder_set_scissor_rect')
+  external void _setScissorRect(int x, int y, int width, int height);
+
+  void setScissorRect({
+    required int width,
+    required int height,
+    int x = 0,
+    int y = 0,
+  }) {
+    _setScissorRect(x, y, width, height);
+  }
+
+  @pragma('vm:external-name', 'RenderCommandEncoder_set_cull_mode')
+  external void _setCullMode(int mode);
+
+  void setCullMode(CullMode mode) => _setCullMode(mode.value);
 
   @pragma('vm:external-name', 'RenderCommandEncoder_draw_primitives')
   external void _drawPrimitives(
@@ -101,8 +159,54 @@ base class RenderCommandEncoder extends NativeFieldWrapperClass1 {
     );
   }
 
+  // @pragma("vm:external-name", "RenderCommandEncoder_draw_indexed_primitives")
+  // external void _drawIndexedPrimitives(
+  //   int primitiveType,
+  //   int indexCount,
+  //   int instanceCount,
+  //   int baseVertex,
+  //   int baseInstance,
+  // );
+
+  // void drawIndexedPrimitives({
+  //   required PrimitiveType primitiveType,
+  //   required int indexCount,
+  //   required IndexType indexType,
+  //   required int instanceCount,
+  //   int baseVertex = 0,
+  //   int baseInstance = 0,
+  // }) {
+  //   _drawIndexedPrimitives(
+  //     primitiveType.value,
+  //     indexCount,
+  //     instanceCount,
+  //     baseVertex,
+  //     baseInstance,
+  //   );
+  // }
+
+  @pragma('vm:external-name', 'RenderCommandEncoder_set_argument_table')
+  external void setArgumentTable(Gpu gpu);
+
   @pragma('vm:external-name', 'RenderCommandEncoder_end_encoding')
   external void endEncoding();
+}
+
+enum CullMode {
+  none(0),
+  front(1),
+  back(2);
+
+  final int value;
+  const CullMode(this.value);
+}
+
+enum IndexType {
+  uint16(0),
+  uint32(1);
+
+  final int value;
+  const IndexType(this.value);
 }
 
 enum PrimitiveType {
@@ -148,6 +252,10 @@ class RenderPipelineDescriptor {
     required this.colorAttachments,
     required this.vertexShader,
     required this.fragmentShader,
+    this.depthAttachmentPixelFormat = PixelFormat.invalid,
+    this.stencilAttachmentPixelFormat = PixelFormat.invalid,
+    this.primitiveTopology = PrimitiveTopology.triangle,
+    this.label = "Unnamed Render Pipeline Descriptor",
   });
 
   @pragma("vm:entry-point")
