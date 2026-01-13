@@ -12,12 +12,10 @@ pub mod sys {
 use std::{
     ffi::{CStr, CString},
     marker::PhantomData,
-    mem::{ManuallyDrop, MaybeUninit},
+    mem::MaybeUninit,
     os::raw::c_void,
     ptr,
 };
-
-use sdl3::sys::assert;
 
 use crate::dart_api::sys::Dart_LookupLibrary;
 
@@ -160,14 +158,15 @@ pub struct Isolate {
 
 impl Isolate {
     /// Creates a scope that Rust won't exit, it will be handled by the Dart VM. Hence we use ManuallyDrop to avoid double drop.
-    pub fn current<'i>() -> Result<ManuallyDrop<Scope<'i>>> {
+    pub fn current<'i>() -> Result<Scope<'i>> {
         let isolate = unsafe { sys::Dart_CurrentIsolate() };
         if isolate.is_null() {
             return Err(DartError::Api("Dart_CurrentIsolate returned null".into()));
         }
-        Ok(ManuallyDrop::new(Scope {
+        Ok(Scope {
+            should_exit_on_drop: false,
             _marker: PhantomData,
-        }))
+        })
     }
 
     pub fn enter(&mut self) -> Scope<'_> {
@@ -175,6 +174,7 @@ impl Isolate {
             sys::Dart_EnterIsolate(self.raw);
             sys::Dart_EnterScope();
             Scope {
+                should_exit_on_drop: true,
                 _marker: PhantomData,
             }
         }
@@ -204,6 +204,7 @@ impl Drop for Isolate {
 ///
 /// All [`Handle`] values produced from this scope are only valid until this is dropped.
 pub struct Scope<'i> {
+    should_exit_on_drop: bool,
     _marker: PhantomData<&'i mut ()>,
 }
 
@@ -230,6 +231,7 @@ impl<'i> Scope<'i> {
         unsafe { sys::Dart_SetNativeResolver(library.raw, resolver, None) };
     }
 
+    #[inline]
     pub fn check(&self, handle: sys::Dart_Handle) -> Result<Handle<'i>> {
         let handle = check(handle)?;
         Ok(Handle {
@@ -297,8 +299,10 @@ impl<'i> Scope<'i> {
 impl Drop for Scope<'_> {
     fn drop(&mut self) {
         unsafe {
-            sys::Dart_ExitScope();
-            sys::Dart_ExitIsolate();
+            if self.should_exit_on_drop {
+                sys::Dart_ExitScope();
+                sys::Dart_ExitIsolate();
+            }
         }
     }
 }
@@ -460,29 +464,6 @@ impl<'s> Handle<'s> {
         }
     }
 
-    /// Creates a finalizable handle that automatically drops the boxed pointer when the Dart object is garbage collected.
-    ///
-    /// Takes ownership of the `Box<T>` and converts it to a raw pointer. When the Dart object is garbage collected,
-    /// the boxed value will be automatically dropped.
-    pub fn new_finalizable_handle<T>(self, peer: Box<T>) {
-        unsafe extern "C" fn finalizer<T>(_isolate_callback_data: *mut c_void, peer: *mut c_void) {
-            println!("Finalizing handle");
-            // Convert the peer back to Box<T> and drop it
-            let boxed = Box::from_raw(peer as *mut T);
-            drop(boxed);
-        }
-
-        let peer_ptr = Box::into_raw(peer);
-        unsafe {
-            sys::Dart_NewFinalizableHandle(
-                self.raw,
-                peer_ptr as *mut c_void,
-                0,
-                Some(finalizer::<T>),
-            );
-        }
-    }
-
     pub fn is_closure(self) -> bool {
         unsafe { sys::Dart_IsClosure(self.raw) }
     }
@@ -490,6 +471,21 @@ impl<'s> Handle<'s> {
     pub fn set_peer<T>(self, peer: Box<T>) {
         let peer_ptr = Box::into_raw(peer);
         unsafe { sys::Dart_SetPeer(self.raw, peer_ptr as *mut c_void) };
+        unsafe {
+            unsafe extern "C" fn finalizer<T>(
+                _isolate_callback_data: *mut c_void,
+                peer: *mut c_void,
+            ) {
+                let boxed = Box::from_raw(peer as *mut T);
+                drop(boxed);
+            }
+            sys::Dart_NewFinalizableHandle(
+                self.raw,
+                peer_ptr as *mut c_void,
+                std::mem::size_of::<T>() as isize,
+                Some(finalizer::<T>),
+            )
+        };
     }
 
     pub fn get_peer<'a, T>(self) -> Result<&'a mut T> {

@@ -18,7 +18,7 @@ use objc2_metal::{
 use objc2_quartz_core::CAMetalDrawable;
 use serde::{Deserialize, Serialize};
 
-use crate::dart_api::{from_dart, Isolate, NativeArguments};
+use crate::dart_api::{from_dart, Isolate, NativeArguments, Scope};
 use crate::window::Window;
 
 #[repr(C)]
@@ -65,10 +65,9 @@ struct CommandBuffer {
 #[native_impl]
 impl CommandBuffer {
     // TODO: pass actual descriptor info in args
-    fn render_command_encoder(args: NativeArguments) {
+    fn render_command_encoder(args: NativeArguments, scope: Scope<'_>) {
         let command_buffer_instance = args.get_arg(0).unwrap();
         let command_buffer = command_buffer_instance.get_peer::<CommandBuffer>().unwrap();
-        let scope = Isolate::current().unwrap();
         let gpu_handle = command_buffer_instance
             .get_field(scope.new_string("gpu").unwrap())
             .unwrap();
@@ -127,14 +126,13 @@ impl RenderCommandEncoder {
             .setRenderPipelineState(&render_pipeline.render_pipeline_state);
     }
 
-    fn set_viewport(args: NativeArguments) {
+    fn set_viewport(args: NativeArguments, scope: Scope<'_>) {
         let render_command_encoder_instance = args.get_arg(0).unwrap();
         let render_command_encoder = render_command_encoder_instance
             .get_peer::<RenderCommandEncoder>()
             .unwrap();
 
         let viewport = args.get_arg(1).unwrap();
-        let scope = Isolate::current().unwrap();
         let viewport = viewport
             .invoke(scope.new_string("toMap").unwrap(), &mut [])
             .unwrap();
@@ -329,9 +327,9 @@ fragment float4 fragmentShader(VSOut in [[stage_in]]) {
 
     fn render_pipeline_descriptor(args: NativeArguments) {}
 
-    fn begin_command_buffer(args: NativeArguments) {
+    fn begin_command_buffer(args: NativeArguments, scope: Scope<'_>) {
         let gpu_instance = args.get_arg(0).unwrap();
-        let gpu = gpu_instance.get_peer::<Gpu>().unwrap();
+        let gpu: &mut Gpu = gpu_instance.get_peer::<Gpu>().unwrap();
         let window = unsafe { &*gpu.window_peer };
 
         let drawable = match window.metal_layer().nextDrawable() {
@@ -356,7 +354,6 @@ fragment float4 fragmentShader(VSOut in [[stage_in]]) {
             .beginCommandBufferWithAllocator(allocator);
         gpu.command_buffer.useResidencySet(&gpu.residency_set);
 
-        let scope = Isolate::current().unwrap();
         let library = scope.library("package:app/native.dart").unwrap();
         let class_type = scope.get_class(library, "CommandBuffer").unwrap();
         // let constructor_name = scope.new_string("CommandBuffer").unwrap();
@@ -399,11 +396,10 @@ fragment float4 fragmentShader(VSOut in [[stage_in]]) {
         gpu.command_queue.signalEvent_value(event, gpu.frame_number);
     }
 
-    fn compile_render_pipeline(args: NativeArguments) {
+    fn compile_render_pipeline(args: NativeArguments, scope: Scope<'_>) {
         let gpu_instance = args.get_arg(0).unwrap();
         let gpu = gpu_instance.get_peer::<Gpu>().unwrap();
         let descriptor_instance = args.get_arg(1).unwrap();
-        let scope = Isolate::current().unwrap();
         let descriptor = descriptor_instance
             .invoke(scope.new_string("toMap").unwrap(), &mut [])
             .unwrap();
@@ -448,7 +444,6 @@ fragment float4 fragmentShader(VSOut in [[stage_in]]) {
                 None,
             )
             .unwrap();
-
         let vfd = objc2_metal::MTL4LibraryFunctionDescriptor::new();
         vfd.setLibrary(Some(&vertex_library));
         vfd.setName(Some(&objc2_foundation::NSString::from_str(
@@ -479,159 +474,10 @@ fragment float4 fragmentShader(VSOut in [[stage_in]]) {
         class_instance.set_field(scope.new_string("gpu").unwrap(), &gpu_instance);
         args.set_return_value(class_instance);
     }
-
-    // fn gpu_draw(args: NativeArguments) {
-    //     let instance = args.get_arg(0).unwrap();
-    //     let gpu = instance.get_peer::<Gpu>().unwrap();
-
-    //     // Safety: we assume the Window outlives the Gpu (both are kept alive by Dart).
-    //     let window = unsafe { &*gpu.window_peer };
-
-    //     gpu.frame_number += 1;
-    //     let frame_index = (gpu.frame_number as usize) % gpu.command_allocators.len();
-
-    //     if gpu.frame_number > gpu.command_allocators.len() as u64 {
-    //         let earlier = gpu.frame_number - gpu.command_allocators.len() as u64;
-    //         let _timed_out = gpu
-    //             .shared_event
-    //             .waitUntilSignaledValue_timeoutMS(earlier, 10);
-    //     }
-
-    //     let allocator = &gpu.command_allocators[frame_index];
-    //     allocator.reset();
-
-    //     gpu.command_buffer
-    //         .beginCommandBufferWithAllocator(allocator);
-    //     gpu.command_buffer.useResidencySet(&gpu.residency_set);
-
-    //     #[cfg(target_os = "macos")]
-    //     let drawable = match window.metal_layer().nextDrawable() {
-    //         Some(d) => d,
-    //         None => return,
-    //     };
-
-    //     #[cfg(target_os = "macos")]
-    //     {
-    //         // Update viewport buffer.
-    //         let (w, h) = window.size();
-    //         let vp = ViewportSize {
-    //             size: [w as u32, h as u32],
-    //         };
-    //         unsafe {
-    //             let dst = gpu.viewport_size_buffer.contents().as_ptr() as *mut ViewportSize;
-    //             dst.write(vp);
-    //         }
-
-    //         // Update triangle buffer.
-    //         let rotation = gpu.frame_number as f32;
-    //         let tri = calculate_triangle(rotation);
-    //         unsafe {
-    //             let dst = gpu.triangle_vertex_buffers[frame_index].contents().as_ptr()
-    //                 as *mut TriangleData;
-    //             dst.write(tri);
-    //         }
-
-    //         // Build render pass.
-    //         let pass = MTL4RenderPassDescriptor::new();
-    //         let ca0 = unsafe { pass.colorAttachments().objectAtIndexedSubscript(0) };
-    //         let tex = drawable.texture();
-    //         ca0.setTexture(Some(tex.as_ref()));
-    //         ca0.setLoadAction(MTLLoadAction::Clear);
-    //         ca0.setStoreAction(MTLStoreAction::Store);
-    //         ca0.setClearColor(objc2_metal::MTLClearColor {
-    //             red: 0.05,
-    //             green: 0.05,
-    //             blue: 0.08,
-    //             alpha: 1.0,
-    //         });
-
-    //         let encoder = match gpu.command_buffer.renderCommandEncoderWithDescriptor(&pass) {
-    //             Some(e) => e,
-    //             None => {
-    //                 gpu.command_buffer.endCommandBuffer();
-    //                 return;
-    //             }
-    //         };
-
-    //         encoder.setRenderPipelineState(&gpu.render_pipeline_state);
-    //         encoder.setViewport(MTLViewport {
-    //             originX: 0.0,
-    //             originY: 0.0,
-    //             width: w as f64,
-    //             height: h as f64,
-    //             znear: 0.0,
-    //             zfar: 1.0,
-    //         });
-
-    //         unsafe {
-    //             gpu.argument_table
-    //                 .setAddress_atIndex(gpu.triangle_vertex_buffers[frame_index].gpuAddress(), 0);
-    //             gpu.argument_table
-    //                 .setAddress_atIndex(gpu.viewport_size_buffer.gpuAddress(), 1);
-    //         }
-    //         encoder.setArgumentTable_atStages(&gpu.argument_table, MTLRenderStages::Vertex);
-
-    //         unsafe {
-    //             encoder.drawPrimitives_vertexStart_vertexCount(MTLPrimitiveType::Triangle, 0, 3);
-    //         }
-    //         encoder.endEncoding();
-
-    //         gpu.command_buffer.endCommandBuffer();
-
-    //         // Submit + present (Metal 4 queue semantics).
-    //         let drawable_mtl: &ProtocolObject<dyn objc2_metal::MTLDrawable> = drawable.as_ref();
-    //         gpu.command_queue.waitForDrawable(drawable_mtl);
-
-    //         let buf_ptr = core::ptr::NonNull::from(&*gpu.command_buffer);
-    //         let mut bufs = [buf_ptr];
-    //         unsafe {
-    //             gpu.command_queue
-    //                 .commit_count(core::ptr::NonNull::new(bufs.as_mut_ptr()).unwrap(), 1);
-    //         }
-
-    //         gpu.command_queue.signalDrawable(drawable_mtl);
-    //         drawable.present();
-
-    //         let event: &ProtocolObject<dyn MTLEvent> = gpu.shared_event.as_ref();
-    //         gpu.command_queue.signalEvent_value(event, gpu.frame_number);
-    //     }
-    // }
 }
 
 struct RenderPipeline {
     render_pipeline_state: Id<dyn MTLRenderPipelineState>,
-}
-
-fn calculate_triangle(rotation_degrees: f32) -> TriangleData {
-    let radius = 0.5_f32;
-    let angle = rotation_degrees * core::f32::consts::PI / 180.0;
-
-    let v0 = Vertex {
-        position: [radius * angle.cos(), radius * angle.sin(), 0.0, 1.0],
-        color: [1.0, 0.0, 0.0, 1.0],
-    };
-    let v1 = Vertex {
-        position: [
-            radius * (angle + 2.0 * core::f32::consts::PI / 3.0).cos(),
-            radius * (angle + 2.0 * core::f32::consts::PI / 3.0).sin(),
-            0.0,
-            1.0,
-        ],
-        color: [0.0, 1.0, 0.0, 1.0],
-    };
-    let v2 = Vertex {
-        position: [
-            radius * (angle + 4.0 * core::f32::consts::PI / 3.0).cos(),
-            radius * (angle + 4.0 * core::f32::consts::PI / 3.0).sin(),
-            0.0,
-            1.0,
-        ],
-        color: [0.0, 0.0, 1.0, 1.0],
-    };
-
-    TriangleData {
-        vertices: [v0, v1, v2],
-    }
 }
 
 #[derive(Deserialize, Serialize, Debug)]

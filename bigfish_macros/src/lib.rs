@@ -9,14 +9,52 @@ pub fn native_func(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let fn_name = &input_fn.sig.ident;
     let shim_name = syn::Ident::new(&format!("__shim_{}", fn_name), fn_name.span());
 
+    // Check if the function has a scope parameter
+    let has_scope = input_fn.sig.inputs.iter().any(|arg| {
+        if let syn::FnArg::Typed(pat_type) = arg {
+            // Check for direct Scope type
+            if let syn::Type::Path(type_path) = &*pat_type.ty {
+                if let Some(last_segment) = type_path.path.segments.last() {
+                    if last_segment.ident == "Scope" {
+                        return true;
+                    }
+                }
+            }
+            // Check for reference to Scope (&Scope)
+            if let syn::Type::Reference(type_ref) = &*pat_type.ty {
+                if let syn::Type::Path(type_path) = &*type_ref.elem {
+                    if let Some(last_segment) = type_path.path.segments.last() {
+                        if last_segment.ident == "Scope" {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
+    });
+
+    // Generate the shim call based on whether scope is present
+    let shim_call = if has_scope {
+        quote! {
+            let args = crate::dart_api::NativeArguments::from_raw(args);
+            let scope = ::std::mem::ManuallyDrop::into_inner(crate::dart_api::Isolate::current().unwrap());
+            #fn_name(args, scope);
+        }
+    } else {
+        quote! {
+            let args = crate::dart_api::NativeArguments::from_raw(args);
+            #fn_name(args);
+        }
+    };
+
     // Generate the original function + the shim + the inventory submission
     let expanded = quote! {
         #input_fn
 
         #[no_mangle]
         pub unsafe extern "C" fn #shim_name(args: crate::dart_api::sys::Dart_NativeArguments) {
-            let args = crate::dart_api::NativeArguments::from_raw(args);
-            #fn_name(args);
+            #shim_call
         }
 
         ::inventory::submit! {
@@ -68,12 +106,50 @@ pub fn native_impl(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
         let fn_attrs = &f.attrs;
 
+        // Check if the function has a scope parameter
+        let has_scope = f.sig.inputs.iter().any(|arg| {
+            if let syn::FnArg::Typed(pat_type) = arg {
+                // Check for direct Scope type
+                if let syn::Type::Path(type_path) = &*pat_type.ty {
+                    if let Some(last_segment) = type_path.path.segments.last() {
+                        if last_segment.ident == "Scope" {
+                            return true;
+                        }
+                    }
+                }
+                // Check for reference to Scope (&Scope)
+                if let syn::Type::Reference(type_ref) = &*pat_type.ty {
+                    if let syn::Type::Path(type_path) = &*type_ref.elem {
+                        if let Some(last_segment) = type_path.path.segments.last() {
+                            if last_segment.ident == "Scope" {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+            false
+        });
+
+        // Generate the shim call based on whether scope is present
+        let shim_call = if has_scope {
+            quote! {
+                let args = crate::dart_api::NativeArguments::from_raw(args);
+                let scope = crate::dart_api::Isolate::current().unwrap();
+                #self_ty::#fn_name(args, scope);
+            }
+        } else {
+            quote! {
+                let args = crate::dart_api::NativeArguments::from_raw(args);
+                #self_ty::#fn_name(args);
+            }
+        };
+
         shim_items.push(quote! {
             #(#fn_attrs)*
             #[no_mangle]
             pub unsafe extern "C" fn #shim_name(args: crate::dart_api::sys::Dart_NativeArguments) {
-                let args = crate::dart_api::NativeArguments::from_raw(args);
-                #self_ty::#fn_name(args);
+                #shim_call
             }
 
             #(#fn_attrs)*
