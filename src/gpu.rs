@@ -183,7 +183,7 @@ impl Texture {
 impl CommandBuffer {
     fn render_command_encoder(args: NativeArguments, scope: Scope<'_>) {
         let command_buffer_instance = args.get_arg(0).unwrap();
-        let command_buffer = command_buffer_instance.get_peer::<CommandBuffer>().unwrap();
+        let _command_buffer = command_buffer_instance.get_peer::<CommandBuffer>().unwrap();
         let gpu_handle = command_buffer_instance
             .get_field(scope.new_string("gpu").unwrap())
             .unwrap();
@@ -285,7 +285,7 @@ impl CommandBuffer {
 
     fn compute_command_encoder(args: NativeArguments, scope: Scope<'_>) {
         let command_buffer_instance = args.get_arg(0).unwrap();
-        let command_buffer = command_buffer_instance.get_peer::<CommandBuffer>().unwrap();
+        let _command_buffer = command_buffer_instance.get_peer::<CommandBuffer>().unwrap();
         let gpu_handle = command_buffer_instance
             .get_field(scope.new_string("gpu").unwrap())
             .unwrap();
@@ -358,8 +358,8 @@ impl RenderCommandEncoder {
         render_command_encoder.0.setViewport(MTLViewport {
             originX: x,
             originY: y,
-            width: width,
-            height: height,
+            width,
+            height,
             znear: 0.0,
             zfar: 1.0,
         });
@@ -725,7 +725,7 @@ impl Gpu {
             let layer: &CAMetalLayer = window.metal_layer();
             layer.setDevice(Some(device.as_ref()));
             layer.setPixelFormat(MTLPixelFormat::BGRA8Unorm);
-            layer.setMaximumDrawableCount(frames_in_flight as usize);
+            layer.setMaximumDrawableCount(frames_in_flight);
         }
 
         command_queue.addResidencySet(&residency_set);
@@ -979,12 +979,12 @@ impl Gpu {
             .unwrap();
         let vfd = objc2_metal::MTL4LibraryFunctionDescriptor::new();
         vfd.setLibrary(Some(&vertex_library));
-        vfd.setName(Some(&objc2_foundation::NSString::from_str(&"main0")));
+        vfd.setName(Some(&objc2_foundation::NSString::from_str("main0")));
         rp_desc.setVertexFunctionDescriptor(Some(&*vfd));
 
         let ffd = objc2_metal::MTL4LibraryFunctionDescriptor::new();
         ffd.setLibrary(Some(&fragment_library));
-        ffd.setName(Some(&objc2_foundation::NSString::from_str(&"main0")));
+        ffd.setName(Some(&objc2_foundation::NSString::from_str("main0")));
         rp_desc.setFragmentFunctionDescriptor(Some(&*ffd));
 
         let render_pipeline_state = gpu
@@ -1054,7 +1054,7 @@ impl Gpu {
 
         let cfd = objc2_metal::MTL4LibraryFunctionDescriptor::new();
         cfd.setLibrary(Some(&compute_shader_library));
-        cfd.setName(Some(&objc2_foundation::NSString::from_str(&"main0")));
+        cfd.setName(Some(&objc2_foundation::NSString::from_str("main0")));
 
         let desc = MTL4ComputePipelineDescriptor::new();
         desc.setComputeFunctionDescriptor(Some(&*cfd));
@@ -1257,7 +1257,7 @@ impl Buffer {
         args.set_return_value(scope.null_handle().unwrap());
     }
 
-    fn set_label(args: NativeArguments, scope: Scope<'_>) {
+    fn set_label(_args: NativeArguments, _scope: Scope<'_>) {
         // Label methods may not be available on all MTLBuffer implementations
         // No-op for now - can be implemented if needed
     }

@@ -158,10 +158,7 @@ fn poll(args: NativeArguments) {
 
     let mut should_continue = true;
     for event in window.ctx.event_pump().unwrap().poll_iter() {
-        match event {
-            sdl3::event::Event::Quit { .. } => should_continue = false,
-            _ => {}
-        }
+        if let sdl3::event::Event::Quit { .. } = event { should_continue = false }
     }
 
     args.set_bool_return_value(should_continue);

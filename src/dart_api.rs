@@ -769,7 +769,7 @@ pub fn null_handle<'s>(scope: &Scope<'s>) -> Handle<'s> {
     // Dart_Null() should never be an error.
     scope
         .check(unsafe { sys::Dart_Null() })
-        .unwrap_or_else(|_| Handle {
+        .unwrap_or(Handle {
             raw: ptr::null_mut(),
             _marker: PhantomData,
         })
@@ -958,14 +958,14 @@ impl<'a, 's, 'de> de::Deserializer<'de> for &'a mut Deserializer<'a, 's> {
         visitor.visit_string(self.handle.to_string_lossy()?)
     }
 
-    fn deserialize_bytes<V>(self, visitor: V) -> Result<V::Value>
+    fn deserialize_bytes<V>(self, _visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
         Err(DartError::Api("bytes not supported".into()))
     }
 
-    fn deserialize_byte_buf<V>(self, visitor: V) -> Result<V::Value>
+    fn deserialize_byte_buf<V>(self, _visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
