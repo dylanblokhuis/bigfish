@@ -367,12 +367,12 @@ class RenderPipelineDescriptor {
 }
 
 class ShaderLibrary {
-  String source;
+  String path;
   String entryPoint;
-  ShaderLibrary({required this.source, required this.entryPoint});
+  ShaderLibrary({required this.path, required this.entryPoint});
 
   Map<String, dynamic> toMap() {
-    return {'source': source, 'entryPoint': entryPoint};
+    return {'path': path, 'entryPoint': entryPoint};
   }
 }
 

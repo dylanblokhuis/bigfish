@@ -10,6 +10,7 @@ use objc2_metal::{
     MTLSharedEvent, MTLStoreAction, MTLTexture, MTLTextureDescriptor, MTLTextureType,
     MTLTextureUsage, MTLViewport,
 };
+use std::process::{Command, Stdio};
 // Bring ObjC protocol traits into scope for method resolution.
 use objc2_metal::{
     MTL4ArgumentTable as _, MTL4CommandEncoder as _, MTL4Compiler as _,
@@ -201,26 +202,11 @@ impl CommandBuffer {
                     if let Ok(ca_map) = list_obj.get(&scope, i as isize) {
                         let ca = unsafe { pass.colorAttachments().objectAtIndexedSubscript(i) };
 
-                        // Extract texture (optional - falls back to drawable if null)
-                        let drawable_texture = command_buffer.drawable.texture();
                         let texture_key = scope.new_string("texture").unwrap();
-                        let texture =
-                            if let Ok(texture_handle) = ca_map.map_get(&scope, texture_key) {
-                                if !texture_handle.is_null() {
-                                    if let Ok(texture_peer) = texture_handle.get_peer::<Texture>() {
-                                        Some(texture_peer.texture.as_ref())
-                                    } else {
-                                        // Invalid texture object, use drawable
-                                        Some(drawable_texture.as_ref())
-                                    }
-                                } else {
-                                    // Null texture, use drawable
-                                    Some(drawable_texture.as_ref())
-                                }
-                            } else {
-                                // No texture field, use drawable
-                                Some(drawable_texture.as_ref())
-                            };
+                        let texture = ca_map
+                            .map_get(&scope, texture_key)
+                            .map(|h| h.get_peer::<Texture>().unwrap().texture.as_ref())
+                            .ok();
                         ca.setTexture(texture);
 
                         // Extract load action
@@ -546,8 +532,6 @@ impl Gpu {
         args.set_return_value(class_instance);
     }
 
-    fn render_pipeline_descriptor(args: NativeArguments) {}
-
     fn begin_command_buffer(args: NativeArguments, scope: Scope<'_>) {
         let gpu_instance = args.get_arg(0).unwrap();
         let gpu: &mut Gpu = gpu_instance.get_peer::<Gpu>().unwrap();
@@ -651,32 +635,98 @@ impl Gpu {
         rp_desc
             .setInputPrimitiveTopology(MTLPrimitiveTopologyClass(descriptor.primitive_topology.0));
 
+        let vertex_spirv = {
+            let child = Command::new("slangc")
+                .arg("-stage")
+                .arg("vertex")
+                .arg("-target")
+                .arg("spirv")
+                .arg("-entry")
+                .arg(descriptor.vertex_shader.entry_point.as_str())
+                .arg(descriptor.vertex_shader.path.as_str())
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap();
+            let output = child.wait_with_output().unwrap();
+            output.stdout
+        };
+
+        let fragment_spirv = {
+            let child = Command::new("slangc")
+                .arg("-stage")
+                .arg("fragment")
+                .arg("-target")
+                .arg("spirv")
+                .arg("-entry")
+                .arg(descriptor.fragment_shader.entry_point.as_str())
+                .arg(descriptor.fragment_shader.path.as_str())
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap();
+            let output = child.wait_with_output().unwrap();
+            output.stdout
+        };
+
+        let vertex_metal = {
+            let mut child = Command::new("spirv-cross")
+                .arg("-")
+                .arg("--msl")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap();
+
+            use std::io::Write;
+            if let Some(mut stdin) = child.stdin.take() {
+                stdin.write_all(&vertex_spirv).unwrap();
+                stdin.flush().unwrap();
+            }
+
+            let output = child.wait_with_output().unwrap();
+            String::from_utf8(output.stdout).unwrap()
+        };
+
+        let fragment_metal = {
+            let mut child = Command::new("spirv-cross")
+                .arg("-")
+                .arg("--msl")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap();
+
+            use std::io::Write;
+            if let Some(mut stdin) = child.stdin.take() {
+                stdin.write_all(&fragment_spirv).unwrap();
+                stdin.flush().unwrap();
+            }
+
+            let output = child.wait_with_output().unwrap();
+            String::from_utf8(output.stdout).unwrap()
+        };
+
         let vertex_library = gpu
             .device
             .newLibraryWithSource_options_error(
-                &objc2_foundation::NSString::from_str(&descriptor.vertex_shader.source),
+                &objc2_foundation::NSString::from_str(&vertex_metal),
                 None,
             )
             .unwrap();
         let fragment_library = gpu
             .device
             .newLibraryWithSource_options_error(
-                &objc2_foundation::NSString::from_str(&descriptor.fragment_shader.source),
+                &objc2_foundation::NSString::from_str(&fragment_metal),
                 None,
             )
             .unwrap();
         let vfd = objc2_metal::MTL4LibraryFunctionDescriptor::new();
         vfd.setLibrary(Some(&vertex_library));
-        vfd.setName(Some(&objc2_foundation::NSString::from_str(
-            &descriptor.vertex_shader.entry_point,
-        )));
+        vfd.setName(Some(&objc2_foundation::NSString::from_str(&"main0")));
         rp_desc.setVertexFunctionDescriptor(Some(&*vfd));
 
         let ffd = objc2_metal::MTL4LibraryFunctionDescriptor::new();
         ffd.setLibrary(Some(&fragment_library));
-        ffd.setName(Some(&objc2_foundation::NSString::from_str(
-            &descriptor.fragment_shader.entry_point,
-        )));
+        ffd.setName(Some(&objc2_foundation::NSString::from_str(&"main0")));
         rp_desc.setFragmentFunctionDescriptor(Some(&*ffd));
 
         let render_pipeline_state = gpu
@@ -756,7 +806,7 @@ impl Gpu {
             descriptor.setMipmapLevelCount(1);
         }
 
-        let texture = unsafe { gpu.device.newTextureWithDescriptor(&descriptor) }.unwrap();
+        let texture = gpu.device.newTextureWithDescriptor(&descriptor).unwrap();
 
         let library = scope.library("package:app/native.dart").unwrap();
         let class_type = scope.get_class(library, "Texture").unwrap();
@@ -889,7 +939,7 @@ struct PrimitiveTopology(usize);
 #[derive(Deserialize, Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct ShaderLibrary {
-    source: String,
+    path: String,
     entry_point: String,
 }
 

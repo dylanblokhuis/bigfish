@@ -13,7 +13,6 @@ class SimpleRaster {
   late ArgumentTable argumentTable;
 
   SimpleRaster(Gpu gpu) {
-    final metalShader = File("./app/shaders/Shaders.metal").readAsStringSync();
     final descriptor = RenderPipelineDescriptor(
       colorAttachments: [
         RenderPipelineDescriptorColorAttachment(
@@ -21,11 +20,11 @@ class SimpleRaster {
         ),
       ],
       vertexShader: ShaderLibrary(
-        source: metalShader,
+        path: './app/shaders/raster.slang',
         entryPoint: 'vertexShader',
       ),
       fragmentShader: ShaderLibrary(
-        source: metalShader,
+        path: './app/shaders/raster.slang',
         entryPoint: 'fragmentShader',
       ),
       primitiveTopology: PrimitiveTopology.triangle,
