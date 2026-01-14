@@ -216,6 +216,65 @@ base class RenderCommandEncoder extends NativeFieldWrapperClass1 {
   @pragma('vm:external-name', 'RenderCommandEncoder_set_render_pipeline')
   external void setRenderPipeline(RenderPipeline renderPipeline);
 
+  @pragma("vm:external-name", "RenderCommandEncoder_intra_pass_barrier")
+  external void _intraPassBarrier(
+    int afterEncoderStages,
+    int beforeEncoderStages,
+    int visibilityOptions,
+  );
+
+  void intraPassBarrier({
+    required GpuStage beforeEncoderStages,
+    required GpuStage afterEncoderStages,
+    required VisibilityOptions visibilityOptions,
+  }) {
+    _intraPassBarrier(
+      afterEncoderStages.value,
+      beforeEncoderStages.value,
+      visibilityOptions.value,
+    );
+  }
+
+  @pragma("vm:external-name", "RenderCommandEncoder_consumer_barrier")
+  external void _consumerBarrier(
+    int afterStages,
+    int beforeStages,
+    int visibilityOptions,
+  );
+
+  /// This barrier is used to synchronize the command encoder with the previous command encoder.
+  void consumerBarrier({
+    required GpuStage afterStages,
+    required GpuStage beforeStages,
+    required VisibilityOptions visibilityOptions,
+  }) {
+    _consumerBarrier(
+      afterStages.value,
+      beforeStages.value,
+      visibilityOptions.value,
+    );
+  }
+
+  @pragma("vm:external-name", "RenderCommandEncoder_producer_barrier")
+  external void _producerBarrier(
+    int afterStages,
+    int beforeStages,
+    int visibilityOptions,
+  );
+
+  /// This barrier is used to synchronize the command encoder with the next command encoder.
+  void producerBarrier({
+    required GpuStage afterStages,
+    required GpuStage beforeStages,
+    required VisibilityOptions visibilityOptions,
+  }) {
+    _producerBarrier(
+      afterStages.value,
+      beforeStages.value,
+      visibilityOptions.value,
+    );
+  }
+
   @pragma('vm:external-name', 'RenderCommandEncoder_set_viewport')
   external void _setViewport(double x, double y, double width, double height);
 
@@ -303,6 +362,34 @@ base class RenderCommandEncoder extends NativeFieldWrapperClass1 {
   external void endEncoding();
 }
 
+enum GpuStage {
+  /// Represents all available GPU stages for synchronization and barriers.
+  vertex(1 << 0),
+  fragment(1 << 1),
+  tile(1 << 2),
+  object(1 << 3),
+  mesh(1 << 4),
+  resourceState(1 << 26),
+  dispatch(1 << 27),
+  blit(1 << 28),
+  accelerationStructure(1 << 29),
+  machineLearning(1 << 30),
+  all(0x7FFFFFFFFFFFFFFF);
+
+  final int value;
+  const GpuStage(this.value);
+}
+
+enum VisibilityOptions {
+  /// The memory consistency options for synchronization commands in Metal's MTL4VisibilityOptions.
+  none(0),
+  device(1 << 0),
+  resourceAlias(1 << 1);
+
+  final int value;
+  const VisibilityOptions(this.value);
+}
+
 @pragma("vm:entry-point")
 base class ComputeCommandEncoder extends NativeFieldWrapperClass1 {
   @pragma("vm:entry-point")
@@ -310,6 +397,63 @@ base class ComputeCommandEncoder extends NativeFieldWrapperClass1 {
 
   @pragma('vm:external-name', 'ComputeCommandEncoder_end_encoding')
   external void endEncoding();
+
+  @pragma("vm:external-name", "ComputeCommandEncoder_intra_pass_barrier")
+  external void _intraPassBarrier(
+    int afterEncoderStages,
+    int beforeEncoderStages,
+    int visibilityOptions,
+  );
+
+  void intraPassBarrier({
+    required GpuStage afterEncoderStages,
+    required GpuStage beforeEncoderStages,
+    required VisibilityOptions visibilityOptions,
+  }) {
+    _intraPassBarrier(
+      afterEncoderStages.value,
+      beforeEncoderStages.value,
+      visibilityOptions.value,
+    );
+  }
+
+  @pragma("vm:external-name", "ComputeCommandEncoder_consumer_barrier")
+  external void _consumerBarrier(
+    int afterStages,
+    int beforeStages,
+    int visibilityOptions,
+  );
+
+  void consumerBarrier({
+    required GpuStage afterStages,
+    required GpuStage beforeStages,
+    required VisibilityOptions visibilityOptions,
+  }) {
+    _consumerBarrier(
+      afterStages.value,
+      beforeStages.value,
+      visibilityOptions.value,
+    );
+  }
+
+  @pragma("vm:external-name", "ComputeCommandEncoder_producer_barrier")
+  external void _producerBarrier(
+    int afterStages,
+    int beforeStages,
+    int visibilityOptions,
+  );
+
+  void producerBarrier({
+    required GpuStage afterStages,
+    required GpuStage beforeStages,
+    required VisibilityOptions visibilityOptions,
+  }) {
+    _producerBarrier(
+      afterStages.value,
+      beforeStages.value,
+      visibilityOptions.value,
+    );
+  }
 
   @pragma('vm:external-name', 'ComputeCommandEncoder_set_compute_pipeline')
   external void setComputePipeline(ComputePipeline computePipeline);
@@ -341,6 +485,12 @@ base class ComputeCommandEncoder extends NativeFieldWrapperClass1 {
     int threadsPerThreadgroupY,
     int threadsPerThreadgroupZ,
   );
+
+  @pragma('vm:external-name', 'ComputeCommandEncoder_copy')
+  external void copy(Texture sourceTexture, Texture destinationTexture);
+
+  @pragma('vm:external-name', 'ComputeCommandEncoder_generate_mipmaps')
+  external void generateMipmaps(Texture texture);
 }
 
 enum CullMode {

@@ -4,11 +4,12 @@ use objc2_metal::{
     MTL4ArgumentTable, MTL4ArgumentTableDescriptor, MTL4BlendState, MTL4CommandAllocator,
     MTL4CommandBuffer, MTL4CommandQueue, MTL4Compiler, MTL4CompilerDescriptor,
     MTL4ComputeCommandEncoder, MTL4ComputePipelineDescriptor, MTL4RenderCommandEncoder,
-    MTL4RenderPassDescriptor, MTL4RenderPipelineDescriptor, MTLBlendFactor, MTLColorWriteMask,
-    MTLComputePipelineState, MTLCreateSystemDefaultDevice, MTLDevice, MTLEvent, MTLLoadAction,
-    MTLPixelFormat, MTLPrimitiveTopologyClass, MTLPrimitiveType, MTLRenderPipelineState,
-    MTLRenderStages, MTLResidencySet, MTLResidencySetDescriptor, MTLSharedEvent, MTLSize,
-    MTLStoreAction, MTLTexture, MTLTextureDescriptor, MTLTextureType, MTLTextureUsage, MTLViewport,
+    MTL4RenderPassDescriptor, MTL4RenderPipelineDescriptor, MTL4VisibilityOptions, MTLBlendFactor,
+    MTLColorWriteMask, MTLComputePipelineState, MTLCreateSystemDefaultDevice, MTLDevice, MTLEvent,
+    MTLLoadAction, MTLPixelFormat, MTLPrimitiveTopologyClass, MTLPrimitiveType,
+    MTLRenderPipelineState, MTLRenderStages, MTLResidencySet, MTLResidencySetDescriptor,
+    MTLSharedEvent, MTLSize, MTLStages, MTLStoreAction, MTLTexture, MTLTextureDescriptor,
+    MTLTextureType, MTLTextureUsage, MTLViewport,
 };
 use std::process::{Command, Stdio};
 // Bring ObjC protocol traits into scope for method resolution.
@@ -462,6 +463,58 @@ impl RenderCommandEncoder {
         }
     }
 
+    fn intra_pass_barrier(args: NativeArguments) {
+        let render_command_encoder_instance = args.get_arg(0).unwrap();
+        let render_command_encoder = render_command_encoder_instance
+            .get_peer::<RenderCommandEncoder>()
+            .unwrap();
+        let after_encoder_stages = args.get_integer_arg(1).unwrap() as usize;
+        let before_encoder_stages = args.get_integer_arg(2).unwrap() as usize;
+        let visibility_options = args.get_integer_arg(3).unwrap() as usize;
+        render_command_encoder
+            .0
+            .barrierAfterEncoderStages_beforeEncoderStages_visibilityOptions(
+                MTLStages(after_encoder_stages),
+                MTLStages(before_encoder_stages),
+                MTL4VisibilityOptions(visibility_options),
+            );
+    }
+
+    fn consumer_barrier(args: NativeArguments) {
+        let render_command_encoder_instance = args.get_arg(0).unwrap();
+        let render_command_encoder = render_command_encoder_instance
+            .get_peer::<RenderCommandEncoder>()
+            .unwrap();
+        let after_encoder_stages = args.get_integer_arg(1).unwrap() as usize;
+        let before_encoder_stages = args.get_integer_arg(2).unwrap() as usize;
+        let visibility_options = args.get_integer_arg(3).unwrap() as usize;
+        render_command_encoder
+            .0
+            .barrierAfterQueueStages_beforeStages_visibilityOptions(
+                MTLStages(after_encoder_stages),
+                MTLStages(before_encoder_stages),
+                MTL4VisibilityOptions(visibility_options),
+            );
+    }
+
+    fn producer_barrier(args: NativeArguments) {
+        let render_command_encoder_instance = args.get_arg(0).unwrap();
+        let render_command_encoder = render_command_encoder_instance
+            .get_peer::<RenderCommandEncoder>()
+            .unwrap();
+        let after_encoder_stages = args.get_integer_arg(1).unwrap() as usize;
+        let before_encoder_stages = args.get_integer_arg(2).unwrap() as usize;
+        let visibility_options = args.get_integer_arg(3).unwrap() as usize;
+
+        render_command_encoder
+            .0
+            .barrierAfterStages_beforeQueueStages_visibilityOptions(
+                MTLStages(after_encoder_stages),
+                MTLStages(before_encoder_stages),
+                MTL4VisibilityOptions(visibility_options),
+            );
+    }
+
     fn end_encoding(args: NativeArguments) {
         let render_command_encoder_instance = args.get_arg(0).unwrap();
         let render_command_encoder = render_command_encoder_instance
@@ -551,6 +604,90 @@ impl ComputeCommandEncoder {
                     depth: threads_per_threadgroup_z,
                 },
             );
+    }
+
+    fn intra_pass_barrier(args: NativeArguments) {
+        let compute_command_encoder_instance = args.get_arg(0).unwrap();
+        let compute_command_encoder = compute_command_encoder_instance
+            .get_peer::<ComputeCommandEncoder>()
+            .unwrap();
+        let after_encoder_stages = args.get_integer_arg(1).unwrap() as usize;
+        let before_encoder_stages = args.get_integer_arg(2).unwrap() as usize;
+        let visibility_options = args.get_integer_arg(3).unwrap() as usize;
+        compute_command_encoder
+            .0
+            .barrierAfterEncoderStages_beforeEncoderStages_visibilityOptions(
+                MTLStages(after_encoder_stages),
+                MTLStages(before_encoder_stages),
+                MTL4VisibilityOptions(visibility_options),
+            );
+    }
+
+    fn consumer_barrier(args: NativeArguments) {
+        let compute_command_encoder_instance = args.get_arg(0).unwrap();
+        let compute_command_encoder = compute_command_encoder_instance
+            .get_peer::<ComputeCommandEncoder>()
+            .unwrap();
+        let after_encoder_stages = args.get_integer_arg(1).unwrap() as usize;
+        let before_encoder_stages = args.get_integer_arg(2).unwrap() as usize;
+        let visibility_options = args.get_integer_arg(3).unwrap() as usize;
+        compute_command_encoder
+            .0
+            .barrierAfterQueueStages_beforeStages_visibilityOptions(
+                MTLStages(after_encoder_stages),
+                MTLStages(before_encoder_stages),
+                MTL4VisibilityOptions(visibility_options),
+            );
+    }
+
+    fn producer_barrier(args: NativeArguments) {
+        let compute_command_encoder_instance = args.get_arg(0).unwrap();
+        let compute_command_encoder = compute_command_encoder_instance
+            .get_peer::<ComputeCommandEncoder>()
+            .unwrap();
+        let after_encoder_stages = args.get_integer_arg(1).unwrap() as usize;
+        let before_encoder_stages = args.get_integer_arg(2).unwrap() as usize;
+        let visibility_options = args.get_integer_arg(3).unwrap() as usize;
+
+        compute_command_encoder
+            .0
+            .barrierAfterStages_beforeQueueStages_visibilityOptions(
+                MTLStages(after_encoder_stages),
+                MTLStages(before_encoder_stages),
+                MTL4VisibilityOptions(visibility_options),
+            );
+    }
+
+    fn copy(args: NativeArguments) {
+        let compute_command_encoder_instance = args.get_arg(0).unwrap();
+        let compute_command_encoder = compute_command_encoder_instance
+            .get_peer::<ComputeCommandEncoder>()
+            .unwrap();
+        let source_texture_instance = args.get_arg(1).unwrap();
+        let source_texture = source_texture_instance.get_peer::<Texture>().unwrap();
+        let destination_texture_instance = args.get_arg(2).unwrap();
+        let destination_texture = destination_texture_instance.get_peer::<Texture>().unwrap();
+        unsafe {
+            compute_command_encoder.0.copyFromTexture_toTexture(
+                source_texture.texture.as_ref(),
+                destination_texture.texture.as_ref(),
+            );
+        }
+    }
+
+    fn generate_mipmaps(args: NativeArguments) {
+        let compute_command_encoder_instance = args.get_arg(0).unwrap();
+        let compute_command_encoder = compute_command_encoder_instance
+            .get_peer::<ComputeCommandEncoder>()
+            .unwrap();
+        let texture_instance = args.get_arg(1).unwrap();
+        let texture = texture_instance.get_peer::<Texture>().unwrap();
+        unsafe {
+            // compute_command_encoder.0.barrier
+            compute_command_encoder
+                .0
+                .generateMipmapsForTexture(texture.texture.as_ref());
+        }
     }
 
     fn end_encoding(args: NativeArguments) {

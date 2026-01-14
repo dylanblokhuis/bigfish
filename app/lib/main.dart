@@ -97,44 +97,57 @@ void present(World world, Gpu gpu, double interpolation) {
   final computeCommandEncoder = commandBuffer.computeCommandEncoder();
   computeCommandEncoder.setComputePipeline(simpleRaster.computePipeline);
   computeCommandEncoder.setArgumentTableObject(simpleRaster.argumentTable);
-  simpleRaster.argumentTable.setTexture(commandBuffer.drawable(), 0);
+  simpleRaster.argumentTable.setTexture(simpleRaster.colorTexture, 0);
 
   computeCommandEncoder.dispatchThreads(800, 600, 1, 8, 8, 1);
+  computeCommandEncoder.copy(
+    simpleRaster.colorTexture,
+    commandBuffer.drawable(),
+  );
+  computeCommandEncoder.intraPassBarrier(
+    afterEncoderStages: GpuStage.blit,
+    beforeEncoderStages: GpuStage.dispatch,
+    visibilityOptions: VisibilityOptions.device,
+  );
+
   computeCommandEncoder.endEncoding();
 
-  // //
+  final renderCommandEncoder = commandBuffer.renderCommandEncoder(
+    RenderPassDescriptor(
+      colorAttachments: [
+        RenderPassDescriptorColorAttachment(
+          texture: commandBuffer.drawable(),
+          loadAction: LoadAction.load,
+          storeAction: StoreAction.store,
+        ),
+      ],
+    ),
+  );
+  renderCommandEncoder.consumerBarrier(
+    afterStages: GpuStage.dispatch,
+    beforeStages: GpuStage.fragment,
+    visibilityOptions: VisibilityOptions.device,
+  );
+  renderCommandEncoder.setRenderPipeline(simpleRaster.renderPipeline);
 
-  // final renderCommandEncoder = commandBuffer.renderCommandEncoder(
-  //   RenderPassDescriptor(
-  //     colorAttachments: [
-  //       RenderPassDescriptorColorAttachment(
-  //         texture: commandBuffer.drawable(),
-  //         loadAction: LoadAction.load,
-  //         storeAction: StoreAction.store,
-  //       ),
-  //     ],
-  //   ),
-  // );
-  // renderCommandEncoder.setRenderPipeline(simpleRaster.renderPipeline);
+  // Animate the triangle like the old Rust example.
+  final nowMs = DateTime.now().millisecondsSinceEpoch;
+  final rotationDegrees = (nowMs / 1000.0) * 60.0; // 60 deg/sec
+  simpleRaster.vertexBuffer.setContents(
+    _triangleVerticesBytes(rotationDegrees),
+  );
 
-  // // Animate the triangle like the old Rust example.
-  // final nowMs = DateTime.now().millisecondsSinceEpoch;
-  // final rotationDegrees = (nowMs / 1000.0) * 60.0; // 60 deg/sec
-  // simpleRaster.vertexBuffer.setContents(
-  //   _triangleVerticesBytes(rotationDegrees),
-  // );
+  renderCommandEncoder.setArgumentTableObject(simpleRaster.argumentTable);
+  simpleRaster.argumentTable.setBuffer(simpleRaster.vertexBuffer, 0);
+  // simpleRaster.argumentTable.setTexture(simpleRaster.colorTexture, 0);
 
-  // renderCommandEncoder.setArgumentTableObject(simpleRaster.argumentTable);
-  // simpleRaster.argumentTable.setBuffer(simpleRaster.vertexBuffer, 0);
-  // // simpleRaster.argumentTable.setTexture(simpleRaster.colorTexture, 0);
-
-  // renderCommandEncoder.setViewport(width: 800, height: 600);
-  // renderCommandEncoder.drawPrimitives(
-  //   primitiveType: PrimitiveType.triangle,
-  //   vertexCount: 3,
-  //   instanceCount: 1,
-  // );
-  // renderCommandEncoder.endEncoding();
+  renderCommandEncoder.setViewport(width: 800, height: 600);
+  renderCommandEncoder.drawPrimitives(
+    primitiveType: PrimitiveType.triangle,
+    vertexCount: 3,
+    instanceCount: 1,
+  );
+  renderCommandEncoder.endEncoding();
 
   gpu.endCommandBuffer(commandBuffer);
 }
