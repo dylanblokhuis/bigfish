@@ -12,8 +12,9 @@ struct VertexOut {
 
 [[vk::binding(0)]]
 StructuredBuffer<Vertex> vertices;
-[[vk::binding(1)]]
-ConstantBuffer<uint2> viewportSize;
+
+[vk::binding(1)]
+Texture2D<float4> colorTexture;
 
 [shader("vertex")]
 VertexOut vertexShader(uint vertexID : SV_VertexID) {

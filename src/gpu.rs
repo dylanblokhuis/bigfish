@@ -3,12 +3,12 @@ use objc2::{rc::Retained, runtime::ProtocolObject};
 use objc2_metal::{
     MTL4ArgumentTable, MTL4ArgumentTableDescriptor, MTL4BlendState, MTL4CommandAllocator,
     MTL4CommandBuffer, MTL4CommandQueue, MTL4Compiler, MTL4CompilerDescriptor,
-    MTL4RenderCommandEncoder, MTL4RenderPassDescriptor, MTL4RenderPipelineDescriptor,
-    MTLBlendFactor, MTLColorWriteMask, MTLCreateSystemDefaultDevice, MTLDevice, MTLEvent,
-    MTLLoadAction, MTLPixelFormat, MTLPrimitiveTopologyClass, MTLPrimitiveType,
-    MTLRenderPipelineState, MTLRenderStages, MTLResidencySet, MTLResidencySetDescriptor,
-    MTLSharedEvent, MTLStoreAction, MTLTexture, MTLTextureDescriptor, MTLTextureType,
-    MTLTextureUsage, MTLViewport,
+    MTL4ComputeCommandEncoder, MTL4ComputePipelineDescriptor, MTL4RenderCommandEncoder,
+    MTL4RenderPassDescriptor, MTL4RenderPipelineDescriptor, MTLBlendFactor, MTLColorWriteMask,
+    MTLComputePipelineState, MTLCreateSystemDefaultDevice, MTLDevice, MTLEvent, MTLLoadAction,
+    MTLPixelFormat, MTLPrimitiveTopologyClass, MTLPrimitiveType, MTLRenderPipelineState,
+    MTLRenderStages, MTLResidencySet, MTLResidencySetDescriptor, MTLSharedEvent, MTLSize,
+    MTLStoreAction, MTLTexture, MTLTextureDescriptor, MTLTextureType, MTLTextureUsage, MTLViewport,
 };
 use std::process::{Command, Stdio};
 // Bring ObjC protocol traits into scope for method resolution.
@@ -18,6 +18,7 @@ use objc2_metal::{
 };
 use objc2_quartz_core::CAMetalDrawable;
 use serde::{Deserialize, Serialize};
+use std::io::Write;
 
 use crate::dart_api::{from_dart, Handle, List, NativeArguments, Result, Scope, TypedDataView};
 use crate::window::Window;
@@ -281,6 +282,32 @@ impl CommandBuffer {
         args.set_return_value(render_command_encoder_instance);
     }
 
+    fn compute_command_encoder(args: NativeArguments, scope: Scope<'_>) {
+        let command_buffer_instance = args.get_arg(0).unwrap();
+        let command_buffer = command_buffer_instance.get_peer::<CommandBuffer>().unwrap();
+        let gpu_handle = command_buffer_instance
+            .get_field(scope.new_string("gpu").unwrap())
+            .unwrap();
+        let gpu = gpu_handle.get_peer::<Gpu>().unwrap();
+
+        let compute_command_encoder = gpu.command_buffer.computeCommandEncoder().unwrap();
+        let compute_command_encoder_instance = scope
+            .new_object(
+                scope
+                    .get_class(
+                        scope.library("package:app/native.dart").unwrap(),
+                        "ComputeCommandEncoder",
+                    )
+                    .unwrap(),
+                scope.null_handle().unwrap(),
+                &mut [],
+            )
+            .unwrap();
+        compute_command_encoder_instance
+            .set_peer(Box::new(ComputeCommandEncoder(compute_command_encoder)));
+        args.set_return_value(compute_command_encoder_instance);
+    }
+
     fn drawable(args: NativeArguments, scope: Scope<'_>) {
         let command_buffer_instance = args.get_arg(0).unwrap();
         let command_buffer = command_buffer_instance.get_peer::<CommandBuffer>().unwrap();
@@ -295,6 +322,8 @@ impl CommandBuffer {
         args.set_return_value(class_instance);
     }
 }
+
+struct ComputeCommandEncoder(Id<dyn MTL4ComputeCommandEncoder>);
 
 struct RenderCommandEncoder(Id<dyn MTL4RenderCommandEncoder>);
 
@@ -442,6 +471,96 @@ impl RenderCommandEncoder {
     }
 }
 
+#[native_impl]
+impl ComputeCommandEncoder {
+    fn set_compute_pipeline(args: NativeArguments) {
+        let compute_command_encoder_instance = args.get_arg(0).unwrap();
+        let compute_command_encoder = compute_command_encoder_instance
+            .get_peer::<ComputeCommandEncoder>()
+            .unwrap();
+        let compute_pipeline = args.get_arg(1).unwrap();
+        let compute_pipeline = compute_pipeline.get_peer::<ComputePipeline>().unwrap();
+        compute_command_encoder
+            .0
+            .setComputePipelineState(&compute_pipeline.compute_pipeline_state);
+    }
+
+    fn set_argument_table_object(args: NativeArguments) {
+        let compute_command_encoder_instance = args.get_arg(0).unwrap();
+        let compute_command_encoder = compute_command_encoder_instance
+            .get_peer::<ComputeCommandEncoder>()
+            .unwrap();
+        let argument_table_instance = args.get_arg(1).unwrap();
+        let argument_table = argument_table_instance.get_peer::<ArgumentTable>().unwrap();
+        compute_command_encoder
+            .0
+            .setArgumentTable(Some(argument_table.table.as_ref()));
+    }
+
+    fn dispatch_threads(args: NativeArguments) {
+        let compute_command_encoder_instance = args.get_arg(0).unwrap();
+        let compute_command_encoder = compute_command_encoder_instance
+            .get_peer::<ComputeCommandEncoder>()
+            .unwrap();
+        let threads_per_grid_x = args.get_integer_arg(1).unwrap() as usize;
+        let threads_per_grid_y = args.get_integer_arg(2).unwrap() as usize;
+        let threads_per_grid_z = args.get_integer_arg(3).unwrap() as usize;
+        let threads_per_threadgroup_x = args.get_integer_arg(4).unwrap() as usize;
+        let threads_per_threadgroup_y = args.get_integer_arg(5).unwrap() as usize;
+        let threads_per_threadgroup_z = args.get_integer_arg(6).unwrap() as usize;
+
+        compute_command_encoder
+            .0
+            .dispatchThreads_threadsPerThreadgroup(
+                MTLSize {
+                    width: threads_per_grid_x,
+                    height: threads_per_grid_y,
+                    depth: threads_per_grid_z,
+                },
+                MTLSize {
+                    width: threads_per_threadgroup_x,
+                    height: threads_per_threadgroup_y,
+                    depth: threads_per_threadgroup_z,
+                },
+            );
+    }
+
+    fn dispatch_threadgroups(args: NativeArguments) {
+        let compute_command_encoder_instance = args.get_arg(0).unwrap();
+        let compute_command_encoder = compute_command_encoder_instance
+            .get_peer::<ComputeCommandEncoder>()
+            .unwrap();
+        let threadgroups_per_grid_x = args.get_integer_arg(1).unwrap() as usize;
+        let threadgroups_per_grid_y = args.get_integer_arg(2).unwrap() as usize;
+        let threadgroups_per_grid_z = args.get_integer_arg(3).unwrap() as usize;
+        let threads_per_threadgroup_x = args.get_integer_arg(4).unwrap() as usize;
+        let threads_per_threadgroup_y = args.get_integer_arg(5).unwrap() as usize;
+        let threads_per_threadgroup_z = args.get_integer_arg(6).unwrap() as usize;
+
+        compute_command_encoder
+            .0
+            .dispatchThreadgroups_threadsPerThreadgroup(
+                MTLSize {
+                    width: threadgroups_per_grid_x,
+                    height: threadgroups_per_grid_y,
+                    depth: threadgroups_per_grid_z,
+                },
+                MTLSize {
+                    width: threads_per_threadgroup_x,
+                    height: threads_per_threadgroup_y,
+                    depth: threads_per_threadgroup_z,
+                },
+            );
+    }
+
+    fn end_encoding(args: NativeArguments) {
+        let compute_command_encoder_instance = args.get_arg(0).unwrap();
+        let compute_command_encoder = compute_command_encoder_instance
+            .get_peer::<ComputeCommandEncoder>()
+            .unwrap();
+        compute_command_encoder.0.endEncoding();
+    }
+}
 #[native_impl]
 impl Gpu {
     fn init(args: NativeArguments) {
@@ -676,7 +795,6 @@ impl Gpu {
                 .spawn()
                 .unwrap();
 
-            use std::io::Write;
             if let Some(mut stdin) = child.stdin.take() {
                 stdin.write_all(&vertex_spirv).unwrap();
                 stdin.flush().unwrap();
@@ -704,6 +822,9 @@ impl Gpu {
             let output = child.wait_with_output().unwrap();
             String::from_utf8(output.stdout).unwrap()
         };
+
+        std::fs::write("target/shaders/vertex.metal", &vertex_metal).unwrap();
+        std::fs::write("target/shaders/fragment.metal", &fragment_metal).unwrap();
 
         let vertex_library = gpu
             .device
@@ -746,6 +867,77 @@ impl Gpu {
         args.set_return_value(class_instance);
     }
 
+    fn compile_compute_pipeline(args: NativeArguments, scope: Scope<'_>) {
+        let gpu_instance = args.get_arg(0).unwrap();
+        let gpu = gpu_instance.get_peer::<Gpu>().unwrap();
+        let descriptor_instance = args.get_arg(1).unwrap();
+        let descriptor = descriptor_instance
+            .invoke(scope.new_string("toMap").unwrap(), &mut [])
+            .unwrap();
+        let descriptor = from_dart::<ComputePipelineDescriptor>(descriptor).unwrap();
+        let compute_shader = descriptor.compute_shader;
+        let compute_shader_spirv = {
+            let child = Command::new("slangc")
+                .arg("-stage")
+                .arg("compute")
+                .arg("-target")
+                .arg("spirv")
+                .arg("-entry")
+                .arg(compute_shader.entry_point.as_str())
+                .arg(compute_shader.path.as_str())
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap();
+            let output = child.wait_with_output().unwrap();
+            output.stdout
+        };
+        let compute_shader_metal = {
+            let mut child = Command::new("spirv-cross")
+                .arg("-")
+                .arg("--msl")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap();
+            if let Some(mut stdin) = child.stdin.take() {
+                stdin.write_all(&compute_shader_spirv).unwrap();
+                stdin.flush().unwrap();
+            }
+            let output = child.wait_with_output().unwrap();
+            String::from_utf8(output.stdout).unwrap()
+        };
+        std::fs::write("target/shaders/compute.metal", &compute_shader_metal).unwrap();
+        let compute_shader_library = gpu
+            .device
+            .newLibraryWithSource_options_error(
+                &objc2_foundation::NSString::from_str(&compute_shader_metal),
+                None,
+            )
+            .unwrap();
+
+        let cfd = objc2_metal::MTL4LibraryFunctionDescriptor::new();
+        cfd.setLibrary(Some(&compute_shader_library));
+        cfd.setName(Some(&objc2_foundation::NSString::from_str(&"main0")));
+
+        let desc = MTL4ComputePipelineDescriptor::new();
+        desc.setComputeFunctionDescriptor(Some(&*cfd));
+
+        let compute_pipeline_state = gpu
+            .compiler
+            .newComputePipelineStateWithDescriptor_compilerTaskOptions_error(&desc, None)
+            .unwrap();
+
+        let library = scope.library("package:app/native.dart").unwrap();
+        let class_type = scope.get_class(library, "ComputePipeline").unwrap();
+        let class_instance = scope
+            .new_object(class_type, scope.null_handle().unwrap(), &mut [])
+            .unwrap();
+        class_instance.set_peer(Box::new(ComputePipeline {
+            compute_pipeline_state,
+        }));
+        args.set_return_value(class_instance);
+    }
+
     fn create_buffer(args: NativeArguments, scope: Scope<'_>) {
         let gpu_instance = args.get_arg(0).unwrap();
         let gpu = gpu_instance.get_peer::<Gpu>().unwrap();
@@ -774,6 +966,15 @@ impl Gpu {
         let buffer = buffer_instance.get_peer::<Buffer>().unwrap();
 
         gpu.residency_set.addAllocation(buffer.buffer.as_ref());
+    }
+
+    fn add_texture_to_residency_set(args: NativeArguments) {
+        let gpu_instance = args.get_arg(0).unwrap();
+        let gpu = gpu_instance.get_peer::<Gpu>().unwrap();
+        let texture_instance = args.get_arg(1).unwrap();
+        let texture = texture_instance.get_peer::<Texture>().unwrap();
+
+        gpu.residency_set.addAllocation(texture.texture.as_ref());
     }
 
     fn commit_residency_set(args: NativeArguments) {
@@ -820,6 +1021,10 @@ impl Gpu {
 
 struct RenderPipeline {
     render_pipeline_state: Id<dyn MTLRenderPipelineState>,
+}
+
+struct ComputePipeline {
+    compute_pipeline_state: Id<dyn MTLComputePipelineState>,
 }
 
 struct Buffer {
@@ -931,6 +1136,13 @@ struct RenderPipelineDescriptor {
     primitive_topology: PrimitiveTopology,
     vertex_shader: ShaderLibrary,
     fragment_shader: ShaderLibrary,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct ComputePipelineDescriptor {
+    label: String,
+    compute_shader: ShaderLibrary,
 }
 
 #[derive(Deserialize, Serialize, Debug)]

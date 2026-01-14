@@ -8,28 +8,39 @@ import 'native.dart';
 
 class SimpleRaster {
   late RenderPipeline renderPipeline;
+  late ComputePipeline computePipeline;
   late Buffer vertexBuffer;
-  late Buffer viewportBuffer;
+  late Texture colorTexture;
   late ArgumentTable argumentTable;
 
   SimpleRaster(Gpu gpu) {
-    final descriptor = RenderPipelineDescriptor(
-      colorAttachments: [
-        RenderPipelineDescriptorColorAttachment(
-          pixelFormat: PixelFormat.bgra8Unorm,
+    renderPipeline = gpu.compileRenderPipeline(
+      RenderPipelineDescriptor(
+        colorAttachments: [
+          RenderPipelineDescriptorColorAttachment(
+            pixelFormat: PixelFormat.bgra8Unorm,
+          ),
+        ],
+        vertexShader: ShaderLibrary(
+          path: './app/shaders/raster.slang',
+          entryPoint: 'vertexShader',
         ),
-      ],
-      vertexShader: ShaderLibrary(
-        path: './app/shaders/raster.slang',
-        entryPoint: 'vertexShader',
+        fragmentShader: ShaderLibrary(
+          path: './app/shaders/raster.slang',
+          entryPoint: 'fragmentShader',
+        ),
+        primitiveTopology: PrimitiveTopology.triangle,
       ),
-      fragmentShader: ShaderLibrary(
-        path: './app/shaders/raster.slang',
-        entryPoint: 'fragmentShader',
-      ),
-      primitiveTopology: PrimitiveTopology.triangle,
     );
-    renderPipeline = gpu.compileRenderPipeline(descriptor);
+
+    computePipeline = gpu.compileComputePipeline(
+      ComputePipelineDescriptor(
+        computeShader: ShaderLibrary(
+          path: "./app/shaders/compute.slang",
+          entryPoint: "computeShader",
+        ),
+      ),
+    );
 
     // Vertex buffer: 3 vertices, each vertex is float4 position + float4 color.
     // Layout must match `struct Vertex` in `app/shaders/Shaders.metal`.
@@ -37,18 +48,20 @@ class SimpleRaster {
     vertexBuffer.setContents(_triangleVerticesBytes(0.0));
     gpu.addBufferToResidencySet(vertexBuffer);
 
-    // Viewport buffer: uint2 (width, height) used by the vertex shader.
-    viewportBuffer = gpu.createBuffer(2 * 4);
-    viewportBuffer.setContents(_viewportBytes(width: 800, height: 600));
-    gpu.addBufferToResidencySet(viewportBuffer);
+    colorTexture = gpu.createTexture(800, 600, PixelFormat.rgba8Unorm.value);
+    gpu.addTextureToResidencySet(colorTexture);
 
     // Make residency additions visible to the GPU.
     gpu.commitResidencySet();
 
     // Create the argument table and bind GPU addresses (buffer indices in shader).
-    argumentTable = gpu.createArgumentTable(maxBufferBindCount: 2);
-    argumentTable.setBuffer(vertexBuffer, 0);
-    argumentTable.setBuffer(viewportBuffer, 1);
+    argumentTable = gpu.createArgumentTable(
+      maxBufferBindCount: 1,
+      maxTextureBindCount: 1,
+    );
+    // argumentTable.setBuffer(vertexBuffer, 0);
+    // argumentTable.setTexture(colorTexture, 0);
+    // argumentTable.setTexture(colorTexture, );
   }
 }
 
@@ -79,32 +92,50 @@ void update(World world) {
 // can be used to interpolate values to not have janky movement
 void present(World world, Gpu gpu, double interpolation) {
   final simpleRaster = world.getResource<SimpleRaster>();
-  // print("Present! $interpolation");
   final commandBuffer = gpu.beginCommandBuffer();
-  final renderCommandEncoder = commandBuffer.renderCommandEncoder(
-    RenderPassDescriptor(
-      colorAttachments: [
-        RenderPassDescriptorColorAttachment(texture: commandBuffer.drawable()),
-      ],
-    ),
-  );
-  renderCommandEncoder.setRenderPipeline(simpleRaster.renderPipeline);
 
-  // Animate the triangle like the old Rust example.
-  final nowMs = DateTime.now().millisecondsSinceEpoch;
-  final rotationDegrees = (nowMs / 1000.0) * 60.0; // 60 deg/sec
-  simpleRaster.vertexBuffer.setContents(
-    _triangleVerticesBytes(rotationDegrees),
-  );
+  final computeCommandEncoder = commandBuffer.computeCommandEncoder();
+  computeCommandEncoder.setComputePipeline(simpleRaster.computePipeline);
+  computeCommandEncoder.setArgumentTableObject(simpleRaster.argumentTable);
+  simpleRaster.argumentTable.setTexture(commandBuffer.drawable(), 0);
 
-  renderCommandEncoder.setArgumentTableObject(simpleRaster.argumentTable);
-  renderCommandEncoder.setViewport(width: 800, height: 600);
-  renderCommandEncoder.drawPrimitives(
-    primitiveType: PrimitiveType.triangle,
-    vertexCount: 3,
-    instanceCount: 1,
-  );
-  renderCommandEncoder.endEncoding();
+  computeCommandEncoder.dispatchThreads(800, 600, 1, 8, 8, 1);
+  computeCommandEncoder.endEncoding();
+
+  // //
+
+  // final renderCommandEncoder = commandBuffer.renderCommandEncoder(
+  //   RenderPassDescriptor(
+  //     colorAttachments: [
+  //       RenderPassDescriptorColorAttachment(
+  //         texture: commandBuffer.drawable(),
+  //         loadAction: LoadAction.load,
+  //         storeAction: StoreAction.store,
+  //       ),
+  //     ],
+  //   ),
+  // );
+  // renderCommandEncoder.setRenderPipeline(simpleRaster.renderPipeline);
+
+  // // Animate the triangle like the old Rust example.
+  // final nowMs = DateTime.now().millisecondsSinceEpoch;
+  // final rotationDegrees = (nowMs / 1000.0) * 60.0; // 60 deg/sec
+  // simpleRaster.vertexBuffer.setContents(
+  //   _triangleVerticesBytes(rotationDegrees),
+  // );
+
+  // renderCommandEncoder.setArgumentTableObject(simpleRaster.argumentTable);
+  // simpleRaster.argumentTable.setBuffer(simpleRaster.vertexBuffer, 0);
+  // // simpleRaster.argumentTable.setTexture(simpleRaster.colorTexture, 0);
+
+  // renderCommandEncoder.setViewport(width: 800, height: 600);
+  // renderCommandEncoder.drawPrimitives(
+  //   primitiveType: PrimitiveType.triangle,
+  //   vertexCount: 3,
+  //   instanceCount: 1,
+  // );
+  // renderCommandEncoder.endEncoding();
+
   gpu.endCommandBuffer(commandBuffer);
 }
 
@@ -135,12 +166,5 @@ Uint8List _triangleVerticesBytes(double rotationDegrees) {
   for (var i = 0; i < floats.length; i++) {
     bd.setFloat32(i * 4, floats[i].toDouble(), Endian.little);
   }
-  return bd.buffer.asUint8List();
-}
-
-Uint8List _viewportBytes({required int width, required int height}) {
-  final bd = ByteData(8);
-  bd.setUint32(0, width, Endian.little);
-  bd.setUint32(4, height, Endian.little);
   return bd.buffer.asUint8List();
 }

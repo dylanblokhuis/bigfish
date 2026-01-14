@@ -96,11 +96,19 @@ base class Gpu extends NativeFieldWrapperClass1 {
     RenderPipelineDescriptor descriptor,
   );
 
+  @pragma('vm:external-name', 'Gpu_compile_compute_pipeline')
+  external ComputePipeline compileComputePipeline(
+    ComputePipelineDescriptor descriptor,
+  );
+
   @pragma('vm:external-name', 'Gpu_create_buffer')
   external Buffer createBuffer(int length, [int storageMode = 0]);
 
   @pragma('vm:external-name', 'Gpu_add_buffer_to_residency_set')
   external void addBufferToResidencySet(Buffer buffer);
+
+  @pragma('vm:external-name', 'Gpu_add_texture_to_residency_set')
+  external void addTextureToResidencySet(Texture texture);
 
   @pragma('vm:external-name', 'Gpu_commit_residency_set')
   external void commitResidencySet();
@@ -157,6 +165,9 @@ base class CommandBuffer extends NativeFieldWrapperClass1 {
     return _renderCommandEncoder(descriptor);
   }
 
+  @pragma('vm:external-name', 'CommandBuffer_compute_command_encoder')
+  external ComputeCommandEncoder computeCommandEncoder();
+
   @pragma('vm:external-name', 'CommandBuffer_drawable')
   external Texture drawable();
 }
@@ -165,6 +176,12 @@ base class CommandBuffer extends NativeFieldWrapperClass1 {
 base class RenderPipeline extends NativeFieldWrapperClass1 {
   @pragma("vm:entry-point")
   RenderPipeline();
+}
+
+@pragma("vm:entry-point")
+base class ComputePipeline extends NativeFieldWrapperClass1 {
+  @pragma("vm:entry-point")
+  ComputePipeline();
 }
 
 @pragma("vm:entry-point")
@@ -286,6 +303,46 @@ base class RenderCommandEncoder extends NativeFieldWrapperClass1 {
   external void endEncoding();
 }
 
+@pragma("vm:entry-point")
+base class ComputeCommandEncoder extends NativeFieldWrapperClass1 {
+  @pragma("vm:entry-point")
+  ComputeCommandEncoder();
+
+  @pragma('vm:external-name', 'ComputeCommandEncoder_end_encoding')
+  external void endEncoding();
+
+  @pragma('vm:external-name', 'ComputeCommandEncoder_set_compute_pipeline')
+  external void setComputePipeline(ComputePipeline computePipeline);
+
+  @pragma('vm:external-name', 'ComputeCommandEncoder_set_argument_table_object')
+  external void setArgumentTableObject(ArgumentTable argumentTable);
+
+  /// threadsPerGrid - [texture.width, texture.height, texture.depth]
+  ///
+  /// threadsPerThreadgroupY - (numthreadgroups) [8, 8, 1]
+  ///
+  /// This should handle partial edges automatically
+  @pragma('vm:external-name', 'ComputeCommandEncoder_dispatch_threads')
+  external void dispatchThreads(
+    int threadsPerGridX,
+    int threadsPerGridY,
+    int threadsPerGridZ,
+    int threadsPerThreadgroupX,
+    int threadsPerThreadgroupY,
+    int threadsPerThreadgroupZ,
+  );
+
+  @pragma('vm:external-name', 'ComputeCommandEncoder_dispatch_threads')
+  external void dispatchThreadgroups(
+    int threadgroupsPerGridX,
+    int threadgroupsPerGridY,
+    int threadgroupsPerGridZ,
+    int threadsPerThreadgroupX,
+    int threadsPerThreadgroupY,
+    int threadsPerThreadgroupZ,
+  );
+}
+
 enum CullMode {
   none(0),
   front(1),
@@ -363,6 +420,16 @@ class RenderPipelineDescriptor {
       'vertexShader': vertexShader.toMap(),
       'fragmentShader': fragmentShader.toMap(),
     };
+  }
+}
+
+class ComputePipelineDescriptor {
+  String label = "Unnamed Compute Pipeline Descriptor";
+  ShaderLibrary computeShader;
+  ComputePipelineDescriptor({required this.computeShader});
+  @pragma("vm:entry-point")
+  Map<String, dynamic> toMap() {
+    return {'label': label, 'computeShader': computeShader.toMap()};
   }
 }
 
