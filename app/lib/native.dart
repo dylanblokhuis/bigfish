@@ -165,6 +165,12 @@ base class ArgumentTable extends NativeFieldWrapperClass1 {
 
   @pragma('vm:external-name', 'ArgumentTable_set_texture')
   external void setTexture(Texture texture, int index);
+
+  @pragma('vm:external-name', 'ArgumentTable_set_acceleration_structure')
+  external void setAccelerationStructure(
+    AccelerationStructure accelerationStructure,
+    int index,
+  );
 }
 
 @pragma("vm:entry-point")

@@ -20,7 +20,8 @@ use std::process::{Command, Stdio};
 use objc2_foundation::NSArray;
 use objc2_metal::{
     MTL4ArgumentTable as _, MTL4CommandEncoder as _, MTL4Compiler as _,
-    MTL4RenderCommandEncoder as _, MTLBuffer as _, MTLDrawable as _, MTLTexture as _,
+    MTL4RenderCommandEncoder as _, MTLAccelerationStructure as _, MTLBuffer as _,
+    MTLDrawable as _, MTLTexture as _,
 };
 use objc2_quartz_core::CAMetalDrawable;
 use serde::{Deserialize, Serialize};
@@ -160,6 +161,25 @@ impl ArgumentTable {
         unsafe {
             let resource_id = texture.texture.gpuResourceID();
             argument_table.table.setTexture_atIndex(resource_id, index);
+        }
+    }
+
+    fn set_acceleration_structure(args: NativeArguments) {
+        let argument_table_instance = args.get_arg(0).unwrap();
+        let argument_table = argument_table_instance.get_peer::<ArgumentTable>().unwrap();
+
+        let acceleration_structure_instance = args.get_arg(1).unwrap();
+        let acceleration_structure = acceleration_structure_instance
+            .get_peer::<AccelerationStructure>()
+            .unwrap();
+
+        let index = args.get_integer_arg(2).unwrap() as usize;
+
+        unsafe {
+            let resource_id = acceleration_structure.acceleration_structure.gpuResourceID();
+            argument_table
+                .table
+                .setAccelerationStructure_atIndex(resource_id, index);
         }
     }
 }
