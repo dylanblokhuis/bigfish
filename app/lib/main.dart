@@ -33,7 +33,10 @@ class SimpleRaytracer {
     gpu.addBufferToResidencySet(vertexBuffer);
 
     final triangleDescriptor = TriangleGeometryDescriptor(
-      vertexBuffer: BufferRange.fromBuffer(vertexBuffer),
+      vertexBuffer: BufferRange.fromBuffer(
+        vertexBuffer,
+        length: vertexBuffer.length(),
+      ),
       triangleCount: 1,
       vertexStride: 3 * 4,
       vertexFormat: VertexFormat.float3,
@@ -67,7 +70,7 @@ class SimpleRaytracer {
 
     // Create the argument table and bind GPU addresses (buffer indices in shader).
     argumentTable = gpu.createArgumentTable(
-      maxBufferBindCount: 1,
+      maxBufferBindCount: 2,
       maxTextureBindCount: 1,
     );
     argumentTable.setTexture(colorTexture, 0);
