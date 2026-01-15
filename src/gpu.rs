@@ -20,8 +20,8 @@ use std::process::{Command, Stdio};
 use objc2_foundation::NSArray;
 use objc2_metal::{
     MTL4ArgumentTable as _, MTL4CommandEncoder as _, MTL4Compiler as _,
-    MTL4RenderCommandEncoder as _, MTLAccelerationStructure as _, MTLBuffer as _,
-    MTLDrawable as _, MTLTexture as _,
+    MTL4RenderCommandEncoder as _, MTLAccelerationStructure as _, MTLBuffer as _, MTLDrawable as _,
+    MTLTexture as _,
 };
 use objc2_quartz_core::CAMetalDrawable;
 use serde::{Deserialize, Serialize};
@@ -176,10 +176,12 @@ impl ArgumentTable {
         let index = args.get_integer_arg(2).unwrap() as usize;
 
         unsafe {
-            let resource_id = acceleration_structure.acceleration_structure.gpuResourceID();
+            let resource_id = acceleration_structure
+                .acceleration_structure
+                .gpuResourceID();
             argument_table
                 .table
-                .setAccelerationStructure_atIndex(resource_id, index);
+                .setResource_atBufferIndex(resource_id, index);
         }
     }
 }
@@ -1073,6 +1075,8 @@ impl Gpu {
             let mut child = Command::new("spirv-cross")
                 .arg("-")
                 .arg("--msl")
+                .arg("--msl-version")
+                .arg("20300")
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .spawn()
