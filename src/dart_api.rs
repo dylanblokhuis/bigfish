@@ -42,6 +42,7 @@ impl DartError {
     }
 }
 
+#[inline]
 fn check(handle: sys::Dart_Handle) -> Result<sys::Dart_Handle> {
     if handle.is_null() {
         return Err(DartError::NullHandle);
@@ -596,13 +597,7 @@ impl<'a> NativeArguments<'a> {
     }
 
     pub fn get_arg(&self, index: i32) -> Result<Handle<'a>> {
-        let handle = unsafe { sys::Dart_GetNativeArgument(self.raw, index) };
-        if handle.is_null() {
-            return Err(DartError::NullHandle);
-        }
-        if unsafe { sys::Dart_IsError(handle) } {
-            return Err(DartError::from_error_handle(handle));
-        }
+        let handle = check(unsafe { sys::Dart_GetNativeArgument(self.raw, index) })?;
         Ok(Handle {
             raw: handle,
             _marker: PhantomData,
@@ -611,13 +606,8 @@ impl<'a> NativeArguments<'a> {
 
     pub fn get_string_arg(&self, index: i32) -> Result<Handle<'a>> {
         let mut peer: *mut c_void = ptr::null_mut();
-        let handle = unsafe { sys::Dart_GetNativeStringArgument(self.raw, index, &mut peer) };
-        if handle.is_null() {
-            return Err(DartError::NullHandle);
-        }
-        if unsafe { sys::Dart_IsError(handle) } {
-            return Err(DartError::from_error_handle(handle));
-        }
+        let handle =
+            check(unsafe { sys::Dart_GetNativeStringArgument(self.raw, index, &mut peer) })?;
         Ok(Handle {
             raw: handle,
             _marker: PhantomData,
@@ -767,12 +757,10 @@ impl Drop for TypedDataView<'_> {
 /// Convenience: a "null" Dart handle.
 pub fn null_handle<'s>(scope: &Scope<'s>) -> Handle<'s> {
     // Dart_Null() should never be an error.
-    scope
-        .check(unsafe { sys::Dart_Null() })
-        .unwrap_or(Handle {
-            raw: ptr::null_mut(),
-            _marker: PhantomData,
-        })
+    scope.check(unsafe { sys::Dart_Null() }).unwrap_or(Handle {
+        raw: ptr::null_mut(),
+        _marker: PhantomData,
+    })
 }
 
 pub unsafe extern "C" fn native_resolver(

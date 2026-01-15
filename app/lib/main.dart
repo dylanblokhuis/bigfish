@@ -79,13 +79,7 @@ void main() {
 
 // update game logic at 60 ticks
 void update(World world) {
-  // print(time);
   world.spawn();
-
-  // final child = world.spawn();
-  // world.addChild(root, child);
-
-  // print(world);
 }
 
 // we can render here, will loop as fast as possible, with the interpolation value being the amount of time that has passed since the last update
@@ -96,7 +90,7 @@ void present(World world, Gpu gpu, double interpolation) {
 
   final computeCommandEncoder = commandBuffer.computeCommandEncoder();
   computeCommandEncoder.setComputePipeline(simpleRaster.computePipeline);
-  computeCommandEncoder.setArgumentTableObject(simpleRaster.argumentTable);
+  computeCommandEncoder.setArgumentTable(simpleRaster.argumentTable);
   simpleRaster.argumentTable.setTexture(simpleRaster.colorTexture, 0);
 
   computeCommandEncoder.dispatchThreads(800, 600, 1, 8, 8, 1);
@@ -137,9 +131,8 @@ void present(World world, Gpu gpu, double interpolation) {
     _triangleVerticesBytes(rotationDegrees),
   );
 
-  renderCommandEncoder.setArgumentTableObject(simpleRaster.argumentTable);
+  renderCommandEncoder.setArgumentTable(simpleRaster.argumentTable);
   simpleRaster.argumentTable.setBuffer(simpleRaster.vertexBuffer, 0);
-  // simpleRaster.argumentTable.setTexture(simpleRaster.colorTexture, 0);
 
   renderCommandEncoder.setViewport(width: 800, height: 600);
   renderCommandEncoder.drawPrimitives(

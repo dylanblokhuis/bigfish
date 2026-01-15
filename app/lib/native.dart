@@ -110,6 +110,11 @@ base class Gpu extends NativeFieldWrapperClass1 {
   @pragma('vm:external-name', 'Gpu_add_texture_to_residency_set')
   external void addTextureToResidencySet(Texture texture);
 
+  @pragma('vm:external-name', 'Gpu_add_acceleration_structure_to_residency_set')
+  external void addAccelerationStructureToResidencySet(
+    AccelerationStructure accelerationStructure,
+  );
+
   @pragma('vm:external-name', 'Gpu_commit_residency_set')
   external void commitResidencySet();
 
@@ -134,6 +139,20 @@ base class Gpu extends NativeFieldWrapperClass1 {
 
   @pragma('vm:external-name', 'Gpu_create_texture')
   external Texture createTexture(int width, int height, int pixelFormat);
+
+  @pragma('vm:external-name', 'Gpu_create_acceleration_structure')
+  external AccelerationStructure createAccelerationStructure(int size);
+
+  @pragma('vm:external-name', 'Gpu_acceleration_structure_sizes')
+  external AccelerationStructureSizes _accelerationStructureSizes(
+    AccelerationStructureDescriptor descriptor,
+  );
+
+  AccelerationStructureSizes accelerationStructureSizes(
+    AccelerationStructureDescriptor descriptor,
+  ) {
+    return _accelerationStructureSizes(descriptor);
+  }
 }
 
 @pragma("vm:entry-point")
@@ -206,6 +225,19 @@ base class Buffer extends NativeFieldWrapperClass1 {
 
   @pragma('vm:external-name', 'Buffer_set_label')
   external void setLabel(String label);
+}
+
+@pragma("vm:entry-point")
+base class AccelerationStructure extends NativeFieldWrapperClass1 {
+  @pragma("vm:entry-point")
+  AccelerationStructure();
+}
+
+@pragma("vm:entry-point")
+class AccelerationStructureSizes {
+  int accelerationStructureSize = 0;
+  int buildScratchBufferSize = 0;
+  int refitScratchBufferSize = 0;
 }
 
 @pragma("vm:entry-point")
@@ -355,8 +387,8 @@ base class RenderCommandEncoder extends NativeFieldWrapperClass1 {
   //   );
   // }
 
-  @pragma('vm:external-name', 'RenderCommandEncoder_set_argument_table_object')
-  external void setArgumentTableObject(ArgumentTable argumentTable);
+  @pragma('vm:external-name', 'RenderCommandEncoder_set_argument_table')
+  external void setArgumentTable(ArgumentTable argumentTable);
 
   @pragma('vm:external-name', 'RenderCommandEncoder_end_encoding')
   external void endEncoding();
@@ -458,8 +490,8 @@ base class ComputeCommandEncoder extends NativeFieldWrapperClass1 {
   @pragma('vm:external-name', 'ComputeCommandEncoder_set_compute_pipeline')
   external void setComputePipeline(ComputePipeline computePipeline);
 
-  @pragma('vm:external-name', 'ComputeCommandEncoder_set_argument_table_object')
-  external void setArgumentTableObject(ArgumentTable argumentTable);
+  @pragma('vm:external-name', 'ComputeCommandEncoder_set_argument_table')
+  external void setArgumentTable(ArgumentTable argumentTable);
 
   /// threadsPerGrid - [texture.width, texture.height, texture.depth]
   ///
@@ -486,11 +518,130 @@ base class ComputeCommandEncoder extends NativeFieldWrapperClass1 {
     int threadsPerThreadgroupZ,
   );
 
+  @pragma(
+    'vm:external-name',
+    'ComputeCommandEncoder_build_acceleration_structure',
+  )
+  external void _buildAccelerationStructure(
+    AccelerationStructure accelerationStructure,
+    AccelerationStructureDescriptor descriptor,
+    BufferRange scratchBufferRange,
+  );
+
+  void buildAccelerationStructure({
+    required AccelerationStructure accelerationStructure,
+    required AccelerationStructureDescriptor descriptor,
+    required BufferRange scratchBufferRange,
+  }) {
+    _buildAccelerationStructure(
+      accelerationStructure,
+      descriptor,
+      scratchBufferRange,
+    );
+  }
+
   @pragma('vm:external-name', 'ComputeCommandEncoder_copy')
   external void copy(Texture sourceTexture, Texture destinationTexture);
 
   @pragma('vm:external-name', 'ComputeCommandEncoder_generate_mipmaps')
   external void generateMipmaps(Texture texture);
+}
+
+class BufferRange {
+  final int gpuAddress;
+  final int length;
+
+  const BufferRange({required this.gpuAddress, this.length = -1});
+
+  factory BufferRange.fromBuffer(
+    Buffer buffer, {
+    int offset = 0,
+    int length = -1,
+  }) {
+    return BufferRange(
+      gpuAddress: buffer.gpuAddress() + offset,
+      length: length,
+    );
+  }
+
+  @pragma("vm:entry-point")
+  Map<String, dynamic> toMap() {
+    return {'gpuAddress': gpuAddress, 'length': length};
+  }
+}
+
+sealed class AccelerationStructureDescriptor {
+  @pragma("vm:entry-point")
+  Map<String, dynamic> toMap();
+}
+
+sealed class AccelerationStructureGeometryDescriptor {
+  @pragma("vm:entry-point")
+  Map<String, dynamic> toMap();
+}
+
+class PrimitiveAccelerationStructureDescriptor
+    implements AccelerationStructureDescriptor {
+  final List<AccelerationStructureGeometryDescriptor> geometryDescriptors;
+
+  PrimitiveAccelerationStructureDescriptor({required this.geometryDescriptors});
+
+  @pragma("vm:entry-point")
+  @override
+  Map<String, dynamic> toMap() {
+    return {
+      'type': 'primitive',
+      'geometryDescriptors': geometryDescriptors.map((e) => e.toMap()).toList(),
+    };
+  }
+}
+
+class TriangleGeometryDescriptor
+    implements AccelerationStructureGeometryDescriptor {
+  final BufferRange vertexBuffer;
+  final int triangleCount;
+  final int vertexStride;
+  final VertexFormat? vertexFormat;
+  final BufferRange? indexBuffer;
+  final IndexType? indexType;
+  final BufferRange? transformationMatrixBuffer;
+
+  TriangleGeometryDescriptor({
+    required this.vertexBuffer,
+    required this.triangleCount,
+    this.vertexStride = 0,
+    this.vertexFormat,
+    this.indexBuffer,
+    this.indexType,
+    this.transformationMatrixBuffer,
+  });
+
+  @pragma("vm:entry-point")
+  @override
+  Map<String, dynamic> toMap() {
+    return {
+      'type': 'triangle',
+      'vertexBuffer': vertexBuffer.toMap(),
+      'triangleCount': triangleCount,
+      'vertexStride': vertexStride,
+      if (vertexFormat != null) 'vertexFormat': vertexFormat!.value,
+      if (indexBuffer != null) 'indexBuffer': indexBuffer!.toMap(),
+      if (indexType != null) 'indexType': indexType!.value,
+      if (transformationMatrixBuffer != null)
+        'transformationMatrixBuffer': transformationMatrixBuffer!.toMap(),
+    };
+  }
+}
+
+enum VertexFormat {
+  invalid(0),
+  float(28),
+  float2(29),
+  float3(30),
+  float4(31);
+
+  final int value;
+  const VertexFormat(this.value);
 }
 
 enum CullMode {

@@ -1,18 +1,23 @@
 use bigfish_macros::native_impl;
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use objc2_metal::{
-    MTL4ArgumentTable, MTL4ArgumentTableDescriptor, MTL4BlendState, MTL4CommandAllocator,
+    MTL4AccelerationStructureDescriptor, MTL4AccelerationStructureGeometryDescriptor,
+    MTL4AccelerationStructureTriangleGeometryDescriptor, MTL4ArgumentTable,
+    MTL4ArgumentTableDescriptor, MTL4BlendState, MTL4BufferRange, MTL4CommandAllocator,
     MTL4CommandBuffer, MTL4CommandQueue, MTL4Compiler, MTL4CompilerDescriptor,
-    MTL4ComputeCommandEncoder, MTL4ComputePipelineDescriptor, MTL4RenderCommandEncoder,
-    MTL4RenderPassDescriptor, MTL4RenderPipelineDescriptor, MTL4VisibilityOptions, MTLBlendFactor,
-    MTLColorWriteMask, MTLComputePipelineState, MTLCreateSystemDefaultDevice, MTLDevice, MTLEvent,
-    MTLLoadAction, MTLPixelFormat, MTLPrimitiveTopologyClass, MTLPrimitiveType,
-    MTLRenderPipelineState, MTLRenderStages, MTLResidencySet, MTLResidencySetDescriptor,
-    MTLSharedEvent, MTLSize, MTLStages, MTLStoreAction, MTLTexture, MTLTextureDescriptor,
-    MTLTextureType, MTLTextureUsage, MTLViewport,
+    MTL4ComputeCommandEncoder, MTL4ComputePipelineDescriptor,
+    MTL4PrimitiveAccelerationStructureDescriptor, MTL4RenderCommandEncoder,
+    MTL4RenderPassDescriptor, MTL4RenderPipelineDescriptor, MTL4VisibilityOptions,
+    MTLAccelerationStructure, MTLAccelerationStructureDescriptor, MTLAttributeFormat,
+    MTLBlendFactor, MTLColorWriteMask, MTLComputePipelineState, MTLCreateSystemDefaultDevice,
+    MTLDevice, MTLEvent, MTLIndexType, MTLLoadAction, MTLPixelFormat, MTLPrimitiveTopologyClass,
+    MTLPrimitiveType, MTLRenderPipelineState, MTLRenderStages, MTLResidencySet,
+    MTLResidencySetDescriptor, MTLSharedEvent, MTLSize, MTLStages, MTLStoreAction, MTLTexture,
+    MTLTextureDescriptor, MTLTextureType, MTLTextureUsage, MTLViewport,
 };
 use std::process::{Command, Stdio};
 // Bring ObjC protocol traits into scope for method resolution.
+use objc2_foundation::NSArray;
 use objc2_metal::{
     MTL4ArgumentTable as _, MTL4CommandEncoder as _, MTL4Compiler as _,
     MTL4RenderCommandEncoder as _, MTLBuffer as _, MTLDrawable as _, MTLTexture as _,
@@ -63,6 +68,10 @@ struct CommandBuffer {
 
 struct Texture {
     texture: Id<dyn MTLTexture>,
+}
+
+struct AccelerationStructure {
+    acceleration_structure: Id<dyn MTLAccelerationStructure>,
 }
 
 #[native_impl]
@@ -422,31 +431,7 @@ impl RenderCommandEncoder {
         }
     }
 
-    // fn draw_indexed_primitives(args: NativeArguments) {
-    //     let render_command_encoder_instance = args.get_arg(0).unwrap();
-    //     let render_command_encoder = render_command_encoder_instance
-    //         .get_peer::<RenderCommandEncoder>()
-    //         .unwrap();
-    //     let primitive_type = args.get_integer_arg(1).unwrap();
-    //     let index_count = args.get_integer_arg(2).unwrap();
-    //     let instance_count = args.get_integer_arg(3).unwrap();
-    //     let base_vertex = args.get_integer_arg(4).unwrap();
-    //     let base_instance = args.get_integer_arg(5).unwrap();
-
-    //     unsafe {
-    //         render_command_encoder
-    //             .0
-    //             .drawIndexedPrimitives_indexCount_indexType_indexBuffer_indexBufferLength_instanceCount_baseVertex_baseInstance(
-    //                 MTLPrimitiveType(primitive_type as usize),
-    //                 index_count as usize,
-    //                 instance_count as usize,
-    //                 base_vertex as usize,
-    //                 base_instance as usize,
-    //             );
-    //     }
-    // }
-
-    fn set_argument_table_object(args: NativeArguments) {
+    fn set_argument_table(args: NativeArguments) {
         let render_command_encoder_instance = args.get_arg(0).unwrap();
         let render_command_encoder = render_command_encoder_instance
             .get_peer::<RenderCommandEncoder>()
@@ -538,7 +523,7 @@ impl ComputeCommandEncoder {
             .setComputePipelineState(&compute_pipeline.compute_pipeline_state);
     }
 
-    fn set_argument_table_object(args: NativeArguments) {
+    fn set_argument_table(args: NativeArguments) {
         let compute_command_encoder_instance = args.get_arg(0).unwrap();
         let compute_command_encoder = compute_command_encoder_instance
             .get_peer::<ComputeCommandEncoder>()
@@ -604,6 +589,42 @@ impl ComputeCommandEncoder {
                     depth: threads_per_threadgroup_z,
                 },
             );
+    }
+
+    fn build_acceleration_structure(args: NativeArguments, scope: Scope<'_>) {
+        let compute_command_encoder_instance = args.get_arg(0).unwrap();
+        let compute_command_encoder = compute_command_encoder_instance
+            .get_peer::<ComputeCommandEncoder>()
+            .unwrap();
+
+        let acceleration_structure_instance = args.get_arg(1).unwrap();
+        let acceleration_structure = acceleration_structure_instance
+            .get_peer::<AccelerationStructure>()
+            .unwrap();
+
+        let descriptor_instance = args.get_arg(2).unwrap();
+        let descriptor_map = descriptor_instance
+            .invoke(scope.new_string("toMap").unwrap(), &mut [])
+            .unwrap();
+        let descriptor = from_dart::<AccelerationStructureDescriptorData>(descriptor_map).unwrap();
+        let descriptor = build_mtl4_acceleration_structure_descriptor(descriptor);
+
+        let scratch_range_instance = args.get_arg(3).unwrap();
+        let scratch_range_map = scratch_range_instance
+            .invoke(scope.new_string("toMap").unwrap(), &mut [])
+            .unwrap();
+        let scratch_range = from_dart::<BufferRangeData>(scratch_range_map).unwrap();
+        let scratch_range = to_mtl4_buffer_range(&scratch_range);
+
+        unsafe {
+            compute_command_encoder
+                .0
+                .buildAccelerationStructure_descriptor_scratchBuffer(
+                    acceleration_structure.acceleration_structure.as_ref(),
+                    descriptor.as_ref(),
+                    scratch_range,
+                );
+        }
     }
 
     fn intra_pass_barrier(args: NativeArguments) {
@@ -1114,11 +1135,85 @@ impl Gpu {
         gpu.residency_set.addAllocation(texture.texture.as_ref());
     }
 
+    fn add_acceleration_structure_to_residency_set(args: NativeArguments) {
+        let gpu_instance = args.get_arg(0).unwrap();
+        let gpu = gpu_instance.get_peer::<Gpu>().unwrap();
+        let acceleration_structure_instance = args.get_arg(1).unwrap();
+        let acceleration_structure = acceleration_structure_instance
+            .get_peer::<AccelerationStructure>()
+            .unwrap();
+
+        gpu.residency_set
+            .addAllocation(acceleration_structure.acceleration_structure.as_ref());
+    }
+
     fn commit_residency_set(args: NativeArguments) {
         let gpu_instance = args.get_arg(0).unwrap();
         let gpu = gpu_instance.get_peer::<Gpu>().unwrap();
 
         gpu.residency_set.commit();
+    }
+
+    fn acceleration_structure_sizes(args: NativeArguments, scope: Scope<'_>) {
+        let gpu_instance = args.get_arg(0).unwrap();
+        let gpu = gpu_instance.get_peer::<Gpu>().unwrap();
+        let descriptor_instance = args.get_arg(1).unwrap();
+        let descriptor_map = descriptor_instance
+            .invoke(scope.new_string("toMap").unwrap(), &mut [])
+            .unwrap();
+        let descriptor = from_dart::<AccelerationStructureDescriptorData>(descriptor_map).unwrap();
+
+        let mtl4_descriptor = build_mtl4_acceleration_structure_descriptor(descriptor);
+        let mtl_descriptor: Retained<MTLAccelerationStructureDescriptor> =
+            mtl4_descriptor.clone().into_super();
+        let sizes = gpu
+            .device
+            .accelerationStructureSizesWithDescriptor(mtl_descriptor.as_ref());
+
+        let library = scope.library("package:app/native.dart").unwrap();
+        let class_type = scope
+            .get_class(library, "AccelerationStructureSizes")
+            .unwrap();
+        let class_instance = scope
+            .new_object(class_type, scope.null_handle().unwrap(), &mut [])
+            .unwrap();
+        class_instance.set_field(
+            scope.new_string("accelerationStructureSize").unwrap(),
+            &scope
+                .new_integer(sizes.accelerationStructureSize as i64)
+                .unwrap(),
+        );
+        class_instance.set_field(
+            scope.new_string("buildScratchBufferSize").unwrap(),
+            &scope
+                .new_integer(sizes.buildScratchBufferSize as i64)
+                .unwrap(),
+        );
+        class_instance.set_field(
+            scope.new_string("refitScratchBufferSize").unwrap(),
+            &scope
+                .new_integer(sizes.refitScratchBufferSize as i64)
+                .unwrap(),
+        );
+        args.set_return_value(class_instance);
+    }
+
+    fn create_acceleration_structure(args: NativeArguments, scope: Scope<'_>) {
+        let gpu_instance = args.get_arg(0).unwrap();
+        let gpu = gpu_instance.get_peer::<Gpu>().unwrap();
+        let size = args.get_integer_arg(1).unwrap() as usize;
+
+        let acceleration_structure = gpu.device.newAccelerationStructureWithSize(size).unwrap();
+
+        let library = scope.library("package:app/native.dart").unwrap();
+        let class_type = scope.get_class(library, "AccelerationStructure").unwrap();
+        let class_instance = scope
+            .new_object(class_type, scope.null_handle().unwrap(), &mut [])
+            .unwrap();
+        class_instance.set_peer(Box::new(AccelerationStructure {
+            acceleration_structure,
+        }));
+        args.set_return_value(class_instance);
     }
 
     fn create_texture(args: NativeArguments, scope: Scope<'_>) {
@@ -1261,6 +1356,114 @@ impl Buffer {
         // Label methods may not be available on all MTLBuffer implementations
         // No-op for now - can be implemented if needed
     }
+}
+
+fn to_mtl4_buffer_range(range: &BufferRangeData) -> MTL4BufferRange {
+    let buffer_address = if range.gpu_address < 0 {
+        0
+    } else {
+        range.gpu_address as u64
+    };
+    let length = if range.length < 0 {
+        u64::MAX
+    } else {
+        range.length as u64
+    };
+    MTL4BufferRange {
+        bufferAddress: buffer_address,
+        length,
+    }
+}
+
+fn build_mtl4_acceleration_structure_descriptor(
+    descriptor: AccelerationStructureDescriptorData,
+) -> Retained<MTL4AccelerationStructureDescriptor> {
+    match descriptor {
+        AccelerationStructureDescriptorData::Primitive {
+            geometry_descriptors,
+        } => {
+            let primitive_descriptor = MTL4PrimitiveAccelerationStructureDescriptor::new();
+            if !geometry_descriptors.is_empty() {
+                let mut geometries: Vec<Retained<MTL4AccelerationStructureGeometryDescriptor>> =
+                    Vec::with_capacity(geometry_descriptors.len());
+                for geometry in geometry_descriptors {
+                    match geometry {
+                        AccelerationStructureGeometryDescriptorData::Triangle {
+                            vertex_buffer,
+                            triangle_count,
+                            vertex_stride,
+                            vertex_format,
+                            index_buffer,
+                            index_type,
+                            transformation_matrix_buffer,
+                        } => {
+                            let triangle_descriptor =
+                                MTL4AccelerationStructureTriangleGeometryDescriptor::new();
+                            unsafe {
+                                triangle_descriptor
+                                    .setVertexBuffer(to_mtl4_buffer_range(&vertex_buffer));
+                                triangle_descriptor.setTriangleCount(triangle_count as usize);
+                                if let Some(vertex_stride) = vertex_stride {
+                                    triangle_descriptor.setVertexStride(vertex_stride as usize);
+                                }
+                                if let Some(index_buffer) = index_buffer.as_ref() {
+                                    triangle_descriptor
+                                        .setIndexBuffer(to_mtl4_buffer_range(index_buffer));
+                                }
+                            }
+                            if let Some(vertex_format) = vertex_format {
+                                triangle_descriptor
+                                    .setVertexFormat(MTLAttributeFormat(vertex_format as usize));
+                            }
+                            if let Some(index_type) = index_type {
+                                triangle_descriptor.setIndexType(MTLIndexType(index_type as usize));
+                            }
+                            if let Some(transformation_matrix_buffer) =
+                                transformation_matrix_buffer.as_ref()
+                            {
+                                triangle_descriptor.setTransformationMatrixBuffer(
+                                    to_mtl4_buffer_range(transformation_matrix_buffer),
+                                );
+                            }
+                            geometries.push(triangle_descriptor.into_super());
+                        }
+                    }
+                }
+                let geometries_array = NSArray::from_retained_slice(&geometries);
+                primitive_descriptor.setGeometryDescriptors(Some(&geometries_array));
+            }
+            primitive_descriptor.into_super()
+        }
+    }
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct BufferRangeData {
+    gpu_address: i64,
+    length: i64,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+#[serde(tag = "type", rename_all = "camelCase")]
+enum AccelerationStructureDescriptorData {
+    Primitive {
+        geometry_descriptors: Vec<AccelerationStructureGeometryDescriptorData>,
+    },
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+#[serde(tag = "type", rename_all = "camelCase")]
+enum AccelerationStructureGeometryDescriptorData {
+    Triangle {
+        vertex_buffer: BufferRangeData,
+        triangle_count: u64,
+        vertex_stride: Option<u64>,
+        vertex_format: Option<u64>,
+        index_buffer: Option<BufferRangeData>,
+        index_type: Option<u64>,
+        transformation_matrix_buffer: Option<BufferRangeData>,
+    },
 }
 
 #[derive(Deserialize, Serialize, Debug)]
