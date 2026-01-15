@@ -28,7 +28,7 @@ class SimpleRaytracer {
       ),
     );
 
-    vertexBuffer = gpu.createBuffer(3 * 3 * 4);
+    vertexBuffer = gpu.createBuffer(3 * 4 * 4);
     vertexBuffer.setContents(_trianglePositionsBytes(0.0));
     gpu.addBufferToResidencySet(vertexBuffer);
 
@@ -38,8 +38,8 @@ class SimpleRaytracer {
         length: vertexBuffer.length(),
       ),
       triangleCount: 1,
-      vertexStride: 3 * 4,
-      vertexFormat: VertexFormat.float3,
+      vertexStride: 4 * 4,
+      vertexFormat: VertexFormat.float4,
     );
     accelerationStructureDescriptor = PrimitiveAccelerationStructureDescriptor(
       geometryDescriptors: [triangleDescriptor],
@@ -157,11 +157,11 @@ Uint8List _trianglePositionsBytes(double rotationDegrees) {
 
   final floats = <double>[
     // v0
-    x0, y0, 0.0,
+    x0, y0, 0.0, 1.0,
     // v1
-    x1, y1, 0.0,
+    x1, y1, 0.0, 1.0,
     // v2
-    x2, y2, 0.0,
+    x2, y2, 0.0, 1.0,
   ];
 
   final bd = ByteData(floats.length * 4);
