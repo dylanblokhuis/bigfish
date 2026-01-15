@@ -10,6 +10,7 @@ class SimpleRaytracer {
   static const int outputHeight = 600;
 
   late ComputePipeline computePipeline;
+  late RenderPipeline blitPipeline;
   late Buffer vertexBuffer;
   late Buffer scratchBuffer;
   late AccelerationStructure accelerationStructure;
@@ -17,6 +18,7 @@ class SimpleRaytracer {
   late BufferRange scratchBufferRange;
   late Texture colorTexture;
   late ArgumentTable argumentTable;
+  late ArgumentTable blitArgumentTable;
 
   SimpleRaytracer(Gpu gpu) {
     computePipeline = gpu.compileComputePipeline(
@@ -45,8 +47,9 @@ class SimpleRaytracer {
       geometryDescriptors: [triangleDescriptor],
     );
 
-    final accelerationSizes =
-        gpu.accelerationStructureSizes(accelerationStructureDescriptor);
+    final accelerationSizes = gpu.accelerationStructureSizes(
+      accelerationStructureDescriptor,
+    );
     accelerationStructure = gpu.createAccelerationStructure(
       accelerationSizes.accelerationStructureSize,
     );
@@ -74,7 +77,47 @@ class SimpleRaytracer {
       maxTextureBindCount: 1,
     );
     argumentTable.setTexture(colorTexture, 0);
-    argumentTable.setAccelerationStructure(accelerationStructure, 1);
+    argumentTable.setAccelerationStructure(accelerationStructure, 0);
+
+    // Create blit render pipeline
+    blitPipeline = gpu.compileRenderPipeline(
+      RenderPipelineDescriptor(
+        colorAttachments: [
+          RenderPipelineDescriptorColorAttachment(
+            pixelFormat: PixelFormat.bgra8Unorm,
+          ),
+        ],
+        vertexShader: ShaderLibrary(
+          path: "./app/shaders/blit.slang",
+          entryPoint: "vertexShader",
+        ),
+        fragmentShader: ShaderLibrary(
+          path: "./app/shaders/blit.slang",
+          entryPoint: "fragmentShader",
+        ),
+        primitiveTopology: PrimitiveTopology.triangle,
+      ),
+    );
+
+    // Create argument table for blit pipeline
+    blitArgumentTable = gpu.createArgumentTable(
+      maxBufferBindCount: 0,
+      maxTextureBindCount: 1,
+      maxSamplerStateBindCount: 1,
+    );
+    blitArgumentTable.setTexture(colorTexture, 0);
+
+    final linearSampler = gpu.createSampler(
+      SamplerDescriptor(
+        minFilter: SamplerMinMagFilter.linear,
+        magFilter: SamplerMinMagFilter.linear,
+        mipFilter: SamplerMipFilter.linear,
+        addressModeU: SamplerAddressMode.clampToEdge,
+        addressModeV: SamplerAddressMode.clampToEdge,
+        addressModeW: SamplerAddressMode.clampToEdge,
+      ),
+    );
+    blitArgumentTable.setSampler(linearSampler, 0);
   }
 }
 
@@ -105,9 +148,7 @@ void present(World world, Gpu gpu, double interpolation) {
   // Rotate the triangle and rebuild the acceleration structure.
   final nowMs = DateTime.now().millisecondsSinceEpoch;
   final rotationDegrees = (nowMs / 1000.0) * 60.0; // 60 deg/sec
-  raytracer.vertexBuffer.setContents(
-    _trianglePositionsBytes(rotationDegrees),
-  );
+  raytracer.vertexBuffer.setContents(_trianglePositionsBytes(rotationDegrees));
   computeCommandEncoder.buildAccelerationStructure(
     accelerationStructure: raytracer.accelerationStructure,
     descriptor: raytracer.accelerationStructureDescriptor,
@@ -134,12 +175,46 @@ void present(World world, Gpu gpu, double interpolation) {
     beforeEncoderStages: GpuStage.blit,
     visibilityOptions: VisibilityOptions.device,
   );
-  computeCommandEncoder.copy(
-    raytracer.colorTexture,
-    commandBuffer.drawable(),
-  );
 
   computeCommandEncoder.endEncoding();
+
+  // blit using a render command encoder
+  final drawable = commandBuffer.drawable();
+  final renderCommandEncoder = commandBuffer.renderCommandEncoder(
+    RenderPassDescriptor(
+      colorAttachments: [
+        RenderPassDescriptorColorAttachment(
+          texture: drawable,
+          loadAction: LoadAction.clear,
+          storeAction: StoreAction.store,
+        ),
+      ],
+    ),
+  );
+
+  // Wait for compute shader to finish writing to colorTexture
+  renderCommandEncoder.consumerBarrier(
+    afterStages: GpuStage.dispatch,
+    beforeStages: GpuStage.fragment,
+    visibilityOptions: VisibilityOptions.device,
+  );
+
+  renderCommandEncoder.setRenderPipeline(raytracer.blitPipeline);
+  renderCommandEncoder.setViewport(
+    width: SimpleRaytracer.outputWidth.toDouble(),
+    height: SimpleRaytracer.outputHeight.toDouble(),
+  );
+  renderCommandEncoder.setScissorRect(
+    width: SimpleRaytracer.outputWidth,
+    height: SimpleRaytracer.outputHeight,
+  );
+  renderCommandEncoder.setArgumentTable(raytracer.blitArgumentTable);
+  renderCommandEncoder.drawPrimitives(
+    primitiveType: PrimitiveType.triangle,
+    vertexCount: 3,
+    instanceCount: 1,
+  );
+  renderCommandEncoder.endEncoding();
 
   gpu.endCommandBuffer(commandBuffer);
 }

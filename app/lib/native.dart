@@ -140,6 +140,9 @@ base class Gpu extends NativeFieldWrapperClass1 {
   @pragma('vm:external-name', 'Gpu_create_texture')
   external Texture createTexture(int width, int height, int pixelFormat);
 
+  @pragma('vm:external-name', 'Gpu_create_sampler')
+  external Sampler createSampler(SamplerDescriptor descriptor);
+
   @pragma('vm:external-name', 'Gpu_create_acceleration_structure')
   external AccelerationStructure createAccelerationStructure(int size);
 
@@ -171,6 +174,9 @@ base class ArgumentTable extends NativeFieldWrapperClass1 {
     AccelerationStructure accelerationStructure,
     int index,
   );
+
+  @pragma('vm:external-name', 'ArgumentTable_set_sampler')
+  external void setSampler(Sampler sampler, int index);
 }
 
 @pragma("vm:entry-point")
@@ -237,6 +243,12 @@ base class Buffer extends NativeFieldWrapperClass1 {
 base class AccelerationStructure extends NativeFieldWrapperClass1 {
   @pragma("vm:entry-point")
   AccelerationStructure();
+}
+
+@pragma("vm:entry-point")
+base class Sampler extends NativeFieldWrapperClass1 {
+  @pragma("vm:entry-point")
+  Sampler();
 }
 
 @pragma("vm:entry-point")
@@ -1052,6 +1064,75 @@ class RenderPassDescriptorColorAttachment {
       'loadAction': loadAction.value,
       'storeAction': storeAction.value,
       'clearColor': clearColor,
+    };
+  }
+}
+
+enum SamplerMinMagFilter {
+  notSet(0),
+  nearest(1),
+  linear(2);
+
+  final int value;
+  const SamplerMinMagFilter(this.value);
+}
+
+enum SamplerMipFilter {
+  notSet(0),
+  nearest(1),
+  linear(2);
+
+  final int value;
+  const SamplerMipFilter(this.value);
+}
+
+enum SamplerAddressMode {
+  clampToEdge(0),
+  mirrorClampToEdge(1),
+  repeat(2),
+  mirrorRepeat(3),
+  clampToZero(4),
+  clampToBorderColor(5);
+
+  final int value;
+  const SamplerAddressMode(this.value);
+}
+
+class SamplerDescriptor {
+  SamplerMinMagFilter minFilter = SamplerMinMagFilter.linear;
+  SamplerMinMagFilter magFilter = SamplerMinMagFilter.linear;
+  SamplerMipFilter mipFilter = SamplerMipFilter.linear;
+  SamplerAddressMode addressModeU = SamplerAddressMode.clampToEdge;
+  SamplerAddressMode addressModeV = SamplerAddressMode.clampToEdge;
+  SamplerAddressMode addressModeW = SamplerAddressMode.clampToEdge;
+  int maxAnisotropy = 1;
+  double lodMinClamp = 0.0;
+  double lodMaxClamp = 1000.0;
+
+  SamplerDescriptor({
+    this.minFilter = SamplerMinMagFilter.linear,
+    this.magFilter = SamplerMinMagFilter.linear,
+    this.mipFilter = SamplerMipFilter.linear,
+    this.addressModeU = SamplerAddressMode.clampToEdge,
+    this.addressModeV = SamplerAddressMode.clampToEdge,
+    this.addressModeW = SamplerAddressMode.clampToEdge,
+    this.maxAnisotropy = 1,
+    this.lodMinClamp = 0.0,
+    this.lodMaxClamp = 1000.0,
+  });
+
+  @pragma("vm:entry-point")
+  Map<String, dynamic> toMap() {
+    return {
+      'minFilter': minFilter.value,
+      'magFilter': magFilter.value,
+      'mipFilter': mipFilter.value,
+      'addressModeU': addressModeU.value,
+      'addressModeV': addressModeV.value,
+      'addressModeW': addressModeW.value,
+      'maxAnisotropy': maxAnisotropy,
+      'lodMinClamp': lodMinClamp,
+      'lodMaxClamp': lodMaxClamp,
     };
   }
 }

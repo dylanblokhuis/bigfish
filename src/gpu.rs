@@ -12,8 +12,9 @@ use objc2_metal::{
     MTLBlendFactor, MTLColorWriteMask, MTLComputePipelineState, MTLCreateSystemDefaultDevice,
     MTLDevice, MTLEvent, MTLIndexType, MTLLoadAction, MTLPixelFormat, MTLPrimitiveTopologyClass,
     MTLPrimitiveType, MTLRenderPipelineState, MTLRenderStages, MTLResidencySet,
-    MTLResidencySetDescriptor, MTLSharedEvent, MTLSize, MTLStages, MTLStoreAction, MTLTexture,
-    MTLTextureDescriptor, MTLTextureType, MTLTextureUsage, MTLViewport,
+    MTLResidencySetDescriptor, MTLSamplerDescriptor, MTLSamplerState, MTLSharedEvent, MTLSize,
+    MTLStages, MTLStoreAction, MTLTexture, MTLTextureDescriptor, MTLTextureType, MTLTextureUsage,
+    MTLViewport,
 };
 use std::process::{Command, Stdio};
 // Bring ObjC protocol traits into scope for method resolution.
@@ -21,7 +22,7 @@ use objc2_foundation::NSArray;
 use objc2_metal::{
     MTL4ArgumentTable as _, MTL4CommandEncoder as _, MTL4Compiler as _,
     MTL4RenderCommandEncoder as _, MTLAccelerationStructure as _, MTLBuffer as _, MTLDrawable as _,
-    MTLTexture as _,
+    MTLSamplerState as _, MTLTexture as _,
 };
 use objc2_quartz_core::CAMetalDrawable;
 use serde::{Deserialize, Serialize};
@@ -73,6 +74,10 @@ struct Texture {
 
 struct AccelerationStructure {
     acceleration_structure: Id<dyn MTLAccelerationStructure>,
+}
+
+struct Sampler {
+    sampler_state: Id<dyn MTLSamplerState>,
 }
 
 #[native_impl]
@@ -182,6 +187,23 @@ impl ArgumentTable {
             argument_table
                 .table
                 .setResource_atBufferIndex(resource_id, index);
+        }
+    }
+
+    fn set_sampler(args: NativeArguments) {
+        let argument_table_instance = args.get_arg(0).unwrap();
+        let argument_table = argument_table_instance.get_peer::<ArgumentTable>().unwrap();
+
+        let sampler_instance = args.get_arg(1).unwrap();
+        let sampler = sampler_instance.get_peer::<Sampler>().unwrap();
+
+        let index = args.get_integer_arg(2).unwrap() as usize;
+
+        unsafe {
+            let resource_id = sampler.sampler_state.gpuResourceID();
+            argument_table
+                .table
+                .setSamplerState_atIndex(resource_id, index);
         }
     }
 }
@@ -1273,6 +1295,55 @@ impl Gpu {
         class_instance.set_peer(Box::new(Texture { texture }));
         args.set_return_value(class_instance);
     }
+
+    fn create_sampler(args: NativeArguments, scope: Scope<'_>) {
+        let gpu_instance = args.get_arg(0).unwrap();
+        let gpu = gpu_instance.get_peer::<Gpu>().unwrap();
+
+        let descriptor_instance = args.get_arg(1).unwrap();
+        let descriptor_map = descriptor_instance
+            .invoke(scope.new_string("toMap").unwrap(), &mut [])
+            .unwrap();
+        let descriptor = from_dart::<SamplerDescriptor>(descriptor_map).unwrap();
+
+        let sampler_desc = MTLSamplerDescriptor::new();
+        unsafe {
+            sampler_desc.setMinFilter(objc2_metal::MTLSamplerMinMagFilter(
+                descriptor.min_filter as usize,
+            ));
+            sampler_desc.setMagFilter(objc2_metal::MTLSamplerMinMagFilter(
+                descriptor.mag_filter as usize,
+            ));
+            sampler_desc.setMipFilter(objc2_metal::MTLSamplerMipFilter(
+                descriptor.mip_filter as usize,
+            ));
+            sampler_desc.setSAddressMode(objc2_metal::MTLSamplerAddressMode(
+                descriptor.address_mode_u as usize,
+            ));
+            sampler_desc.setTAddressMode(objc2_metal::MTLSamplerAddressMode(
+                descriptor.address_mode_v as usize,
+            ));
+            sampler_desc.setRAddressMode(objc2_metal::MTLSamplerAddressMode(
+                descriptor.address_mode_w as usize,
+            ));
+            sampler_desc.setMaxAnisotropy(descriptor.max_anisotropy as usize);
+            sampler_desc.setLodMinClamp(descriptor.lod_min_clamp);
+            sampler_desc.setLodMaxClamp(descriptor.lod_max_clamp);
+        }
+
+        let sampler_state = gpu
+            .device
+            .newSamplerStateWithDescriptor(&sampler_desc)
+            .unwrap();
+
+        let library = scope.library("package:app/native.dart").unwrap();
+        let class_type = scope.get_class(library, "Sampler").unwrap();
+        let class_instance = scope
+            .new_object(class_type, scope.null_handle().unwrap(), &mut [])
+            .unwrap();
+        class_instance.set_peer(Box::new(Sampler { sampler_state }));
+        args.set_return_value(class_instance);
+    }
 }
 
 struct RenderPipeline {
@@ -1493,7 +1564,10 @@ enum AccelerationStructureGeometryDescriptorData {
         index_buffer: Option<BufferRangeData>,
         #[serde(rename = "indexType", alias = "index_type")]
         index_type: Option<u64>,
-        #[serde(rename = "transformationMatrixBuffer", alias = "transformation_matrix_buffer")]
+        #[serde(
+            rename = "transformationMatrixBuffer",
+            alias = "transformation_matrix_buffer"
+        )]
         transformation_matrix_buffer: Option<BufferRangeData>,
     },
 }
@@ -1552,3 +1626,17 @@ struct BlendFactor(usize);
 
 #[derive(Deserialize, Serialize, Debug)]
 struct PixelFormat(usize);
+
+#[derive(Deserialize, Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct SamplerDescriptor {
+    min_filter: u32,
+    mag_filter: u32,
+    mip_filter: u32,
+    address_mode_u: u32,
+    address_mode_v: u32,
+    address_mode_w: u32,
+    max_anisotropy: u32,
+    lod_min_clamp: f32,
+    lod_max_clamp: f32,
+}
