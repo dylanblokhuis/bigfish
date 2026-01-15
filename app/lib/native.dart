@@ -241,8 +241,14 @@ base class AccelerationStructure extends NativeFieldWrapperClass1 {
 
 @pragma("vm:entry-point")
 class AccelerationStructureSizes {
+  @pragma("vm:entry-point")
+  AccelerationStructureSizes();
+
+  @pragma("vm:entry-point")
   int accelerationStructureSize = 0;
+  @pragma("vm:entry-point")
   int buildScratchBufferSize = 0;
+  @pragma("vm:entry-point")
   int refitScratchBufferSize = 0;
 }
 
