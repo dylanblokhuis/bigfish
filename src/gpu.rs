@@ -1472,6 +1472,7 @@ struct BufferRangeData {
 #[serde(tag = "type", rename_all = "camelCase")]
 enum AccelerationStructureDescriptorData {
     Primitive {
+        #[serde(rename = "geometryDescriptors", alias = "geometry_descriptors")]
         geometry_descriptors: Vec<AccelerationStructureGeometryDescriptorData>,
     },
 }
@@ -1480,12 +1481,19 @@ enum AccelerationStructureDescriptorData {
 #[serde(tag = "type", rename_all = "camelCase")]
 enum AccelerationStructureGeometryDescriptorData {
     Triangle {
+        #[serde(rename = "vertexBuffer", alias = "vertex_buffer")]
         vertex_buffer: BufferRangeData,
+        #[serde(rename = "triangleCount", alias = "triangle_count")]
         triangle_count: u64,
+        #[serde(rename = "vertexStride", alias = "vertex_stride")]
         vertex_stride: Option<u64>,
+        #[serde(rename = "vertexFormat", alias = "vertex_format")]
         vertex_format: Option<u64>,
+        #[serde(rename = "indexBuffer", alias = "index_buffer")]
         index_buffer: Option<BufferRangeData>,
+        #[serde(rename = "indexType", alias = "index_type")]
         index_type: Option<u64>,
+        #[serde(rename = "transformationMatrixBuffer", alias = "transformation_matrix_buffer")]
         transformation_matrix_buffer: Option<BufferRangeData>,
     },
 }

@@ -67,6 +67,7 @@ class SimpleRaytracer {
 
     // Create the argument table and bind GPU addresses (buffer indices in shader).
     argumentTable = gpu.createArgumentTable(
+      maxBufferBindCount: 1,
       maxTextureBindCount: 1,
     );
     argumentTable.setTexture(colorTexture, 0);
